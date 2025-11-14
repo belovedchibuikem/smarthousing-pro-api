@@ -1,0 +1,64 @@
+openapi: 3.0.3
+info:
+  title: Smart Housing API
+  version: 1.0.0
+servers:
+  - url: http://localhost:8000/api
+paths:
+  /auth/login:
+    post:
+      summary: Login
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                email: { type: string }
+                password: { type: string }
+              required: [email, password]
+      responses:
+        '200':
+          description: OK
+  /auth/register:
+    post:
+      summary: Register
+      responses:
+        '200': { description: OK }
+  /auth/verify-otp:
+    post:
+      summary: Verify OTP
+      responses:
+        '200': { description: OK }
+  /user/wallet:
+    get:
+      summary: Get wallet
+      responses:
+        '200': { description: OK }
+  /user/wallet/transactions:
+    get:
+      summary: Wallet transactions
+      responses:
+        '200': { description: OK }
+  /payments/initialize:
+    post:
+      summary: Initialize payment
+      responses:
+        '200': { description: OK }
+  /subscriptions/initialize:
+    post:
+      summary: Initialize subscription
+      responses:
+        '200': { description: OK }
+  /tenant/analytics/summary:
+    get:
+      summary: Tenant analytics
+      responses:
+        '200': { description: OK }
+  /platform/stats:
+    get:
+      summary: Platform stats
+      responses:
+        '200': { description: OK }
+

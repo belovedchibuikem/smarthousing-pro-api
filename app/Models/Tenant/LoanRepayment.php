@@ -1,0 +1,62 @@
+<?php
+
+namespace App\Models\Tenant;
+
+use Illuminate\Database\Eloquent\Concerns\HasUuids;
+use Illuminate\Database\Eloquent\Factories\HasFactory;
+use Illuminate\Database\Eloquent\Model;
+use Illuminate\Database\Eloquent\Relations\BelongsTo;
+
+class LoanRepayment extends Model
+{
+    use HasFactory, HasUuids;
+
+    protected $connection = 'tenant';
+
+    protected $fillable = [
+        'loan_id',
+        'property_id',
+        'amount',
+        'principal_paid',
+        'interest_paid',
+        'due_date',
+        'status',
+        'paid_at',
+        'payment_method',
+        'reference',
+        'recorded_by',
+    ];
+
+    protected $casts = [
+        'amount' => 'decimal:2',
+        'principal_paid' => 'decimal:2',
+        'interest_paid' => 'decimal:2',
+        'due_date' => 'datetime',
+        'paid_at' => 'datetime',
+    ];
+
+    public function loan(): BelongsTo
+    {
+        return $this->belongsTo(Loan::class);
+    }
+
+    public function property(): BelongsTo
+    {
+        return $this->belongsTo(Property::class);
+    }
+
+    public function recordedBy(): BelongsTo
+    {
+        return $this->belongsTo(User::class, 'recorded_by');
+    }
+
+    public function isPaid(): bool
+    {
+        return $this->status === 'paid';
+    }
+
+    public function isOverdue(): bool
+    {
+        return $this->status === 'overdue' || ($this->due_date->isPast() && $this->status !== 'paid');
+    }
+}
