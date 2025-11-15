@@ -6,6 +6,7 @@ use App\Http\Controllers\Controller;
 use App\Models\Central\MemberSubscription;
 use App\Models\Central\MemberSubscriptionPackage;
 use App\Models\Central\PaymentGateway;
+use App\Models\Central\PlatformTransaction;
 use App\Models\Tenant\Wallet;
 use App\Services\Payment\PaystackService;
 use App\Services\Payment\RemitaService;
@@ -226,60 +227,89 @@ class MemberSubscriptionController extends Controller
     }
 
     /**
-     * Get available payment methods from tenant payment gateways
+     * Get available payment methods from super admin configured payment gateways
+     * Member subscriptions use platform-wide payment gateways configured by super admin
      */
     public function paymentMethods(): JsonResponse
     {
         try {
             Log::info('MemberSubscriptionController::paymentMethods() - METHOD CALLED');
         
-        $tenant = tenant();
-        if (!$tenant) {
+            $tenant = tenant();
+            if (!$tenant) {
                 Log::error('MemberSubscriptionController::paymentMethods() - Tenant not found');
-            return response()->json(['message' => 'Tenant not found'], 404);
-        }
+                return response()->json(['message' => 'Tenant not found'], 404);
+            }
 
             Log::info('MemberSubscriptionController::paymentMethods() - Tenant found', [
                 'tenant_id' => $tenant->id,
                 'tenant_domain' => $tenant->domain ?? 'N/A'
             ]);
 
-        // Use the reusable payment service
-            try {
-        $paymentService = app(\App\Services\Tenant\TenantPaymentService::class);
-                Log::info('MemberSubscriptionController::paymentMethods() - Payment service instantiated');
-            } catch (\Exception $e) {
-                Log::error('MemberSubscriptionController::paymentMethods() - Failed to instantiate payment service', [
-                    'error' => $e->getMessage(),
-                    'trace' => $e->getTraceAsString()
-                ]);
-                return response()->json([
-                    'message' => 'Failed to initialize payment service',
-                    'error' => config('app.debug') ? $e->getMessage() : 'Internal server error'
-                ], 500);
+            // Get available payment methods from super admin configured payment gateways
+            // These are platform-wide payment gateways configured by super admin
+            $gateways = PaymentGateway::where('is_active', true)->get();
+            
+            $methods = [];
+            
+            foreach ($gateways as $gateway) {
+                $settings = $gateway->settings ?? [];
+                $isTestMode = $settings['test_mode'] ?? false;
+                
+                // Map gateway names to payment method IDs
+                $methodId = match($gateway->name) {
+                    'paystack' => 'paystack',
+                    'remita' => 'remita',
+                    'stripe' => 'stripe',
+                    'manual' => 'manual',
+                    default => null,
+                };
+                
+                if (!$methodId) {
+                    continue; // Skip unknown gateways
+                }
+                
+                // Get icon based on gateway type
+                $icon = match($gateway->name) {
+                    'paystack', 'stripe' => 'credit-card',
+                    'remita' => 'bank',
+                    'manual' => 'bank',
+                    default => 'credit-card',
+                };
+                
+                // Build method configuration
+                $configuration = [];
+                
+                // For manual payment, include bank accounts and configuration
+                if ($gateway->name === 'manual') {
+                    $configuration = [
+                        'bank_accounts' => $settings['bank_accounts'] ?? [],
+                        'require_payer_name' => $settings['require_payer_name'] ?? true,
+                        'require_payer_phone' => $settings['require_payer_phone'] ?? false,
+                        'require_account_details' => $settings['require_account_details'] ?? false,
+                        'require_payment_evidence' => $settings['require_payment_evidence'] ?? true,
+                        'account_details' => $settings['account_details'] ?? null,
+                    ];
+                }
+                
+                $methods[] = [
+                    'id' => $methodId,
+                    'name' => $gateway->display_name,
+                    'description' => $gateway->description ?? $this->getDefaultDescription($gateway->name),
+                    'icon' => $icon,
+                    'is_enabled' => $gateway->is_active,
+                    'configuration' => $configuration,
+                    'test_mode' => $isTestMode,
+                ];
             }
             
-            try {
-        $methods = $paymentService->getAvailablePaymentMethods('member_subscription');
-                Log::info('MemberSubscriptionController::paymentMethods() - Payment methods retrieved', [
-                    'methods_count' => count($methods)
-                ]);
-            } catch (\Exception $e) {
-                Log::error('MemberSubscriptionController::paymentMethods() - Failed to get payment methods', [
-                    'error' => $e->getMessage(),
-                    'trace' => $e->getTraceAsString(),
-                    'file' => $e->getFile(),
-                    'line' => $e->getLine()
-                ]);
-                return response()->json([
-                    'message' => 'Failed to retrieve payment methods',
-                    'error' => config('app.debug') ? $e->getMessage() : 'Internal server error'
-                ], 500);
-            }
+            Log::info('MemberSubscriptionController::paymentMethods() - Payment methods retrieved', [
+                'methods_count' => count($methods)
+            ]);
 
-        return response()->json([
-            'payment_methods' => $methods
-        ]);
+            return response()->json([
+                'payment_methods' => $methods
+            ]);
         } catch (\Exception $e) {
             Log::error('MemberSubscriptionController::paymentMethods() - Unexpected error', [
                 'error' => $e->getMessage(),
@@ -292,6 +322,17 @@ class MemberSubscriptionController extends Controller
                 'error' => config('app.debug') ? $e->getMessage() : 'Internal server error'
             ], 500);
         }
+    }
+    
+    private function getDefaultDescription(string $gatewayName): string
+    {
+        return match($gatewayName) {
+            'paystack' => 'Pay with card, bank transfer, or USSD',
+            'remita' => 'Pay with Remita payment gateway',
+            'stripe' => 'Pay with card via Stripe',
+            'manual' => 'Manual bank transfer payment',
+            default => 'Payment gateway',
+        };
     }
 
     /**
@@ -323,18 +364,18 @@ class MemberSubscriptionController extends Controller
             'notes' => 'nullable|string|max:1000',
         ];
 
-        // Add validation for manual payment fields based on gateway configuration
+        // Add validation for manual payment fields based on super admin gateway configuration
         if ($request->payment_method === 'manual') {
-            $tenant = tenant();
-            $manualGateway = \App\Models\Tenant\PaymentGateway::where('gateway_type', 'manual')
-                ->where('is_enabled', true)
+            // Get manual gateway config from super admin payment gateways
+            $manualGateway = PaymentGateway::where('name', 'manual')
+                ->where('is_active', true)
                 ->first();
             
-            $config = $manualGateway ? ($manualGateway->configuration ?? []) : [];
-            $requireEvidence = $config['require_payment_evidence'] ?? true;
-            $requirePayerName = $config['require_payer_name'] ?? true;
-            $requirePayerPhone = $config['require_payer_phone'] ?? true;
-            $requireAccountDetails = $config['require_account_details'] ?? false;
+            $settings = $manualGateway ? ($manualGateway->settings ?? []) : [];
+            $requireEvidence = $settings['require_payment_evidence'] ?? true;
+            $requirePayerName = $settings['require_payer_name'] ?? true;
+            $requirePayerPhone = $settings['require_payer_phone'] ?? false;
+            $requireAccountDetails = $settings['require_account_details'] ?? false;
 
             if ($requirePayerName) {
                 $validationRules['payer_name'] = 'required|string|max:255';
@@ -418,13 +459,20 @@ class MemberSubscriptionController extends Controller
             // For manual and gateway payments, create pending subscription
             // The subscription will be activated when payment is approved/completed
             $reference = $paymentData['reference'];
+            
+            // Calculate dates
+            $startDate = now();
+            $endDate = $startDate->copy()->addDays($package->duration_days ?? 30);
+            $nextBillingDate = $endDate->copy(); // Next billing is when current period ends
+            
             $subscription = \App\Models\Central\MemberSubscription::on('mysql')->create([
                 'business_id' => $tenant->id,
                 'member_id' => $member->id,
                 'package_id' => $package->id,
                 'status' => 'active',
-                'start_date' => now(),
-                'end_date' => now()->addDays($package->duration_days),
+                'start_date' => $startDate,
+                'end_date' => $endDate,
+                'next_billing_date' => $nextBillingDate,
                 'amount_paid' => $package->price,
                 'payment_method' => $request->payment_method,
                 'payment_status' => $request->payment_method === 'manual' ? 'pending' : 'pending',
@@ -441,7 +489,38 @@ class MemberSubscriptionController extends Controller
             if ($payment) {
                 $metadata = $payment->metadata ?? [];
                 $metadata['subscription_id'] = $subscription->id;
+                $metadata['member_subscription_id'] = $subscription->id;
                 $payment->update(['metadata' => $metadata]);
+            }
+
+            // Create PlatformTransaction record
+            try {
+                PlatformTransaction::create([
+                    'tenant_id' => $tenant->id,
+                    'reference' => $reference,
+                    'type' => 'subscription', // Using 'subscription' type for member subscriptions too
+                    'amount' => $package->price,
+                    'currency' => 'NGN',
+                    'status' => $request->payment_method === 'manual' ? 'pending' : 'processing',
+                    'payment_gateway' => $request->payment_method === 'manual' ? 'manual' : $request->payment_method,
+                    'gateway_reference' => $paymentData['gateway_reference'] ?? null,
+                    'approval_status' => $request->payment_method === 'manual' ? 'pending' : null,
+                    'metadata' => [
+                        'member_subscription_id' => $subscription->id,
+                        'member_id' => $member->id,
+                        'package_id' => $package->id,
+                        'package_name' => $package->name,
+                        'payment_method' => $request->payment_method,
+                        'business_id' => $tenant->id,
+                    ],
+                ]);
+            } catch (\Exception $e) {
+                Log::warning('Failed to create PlatformTransaction for member subscription', [
+                    'member_subscription_id' => $subscription->id,
+                    'reference' => $reference,
+                    'error' => $e->getMessage()
+                ]);
+                // Continue even if PlatformTransaction creation fails
             }
 
             return response()->json([
@@ -470,20 +549,56 @@ class MemberSubscriptionController extends Controller
     {
         DB::beginTransaction();
         try {
+            // Calculate dates
+            $startDate = now();
+            $endDate = $startDate->copy()->addDays($package->duration_days ?? 30);
+            $nextBillingDate = $endDate->copy(); // Next billing is when current period ends
+            
             // Create subscription in central database
             $subscription = MemberSubscription::on('mysql')->create([
                 'business_id' => $tenant->id,
                 'member_id' => $member->id,
                 'package_id' => $package->id,
                 'status' => 'active',
-                'start_date' => now(),
-                'end_date' => now()->addDays($package->duration_days),
+                'start_date' => $startDate,
+                'end_date' => $endDate,
+                'next_billing_date' => $nextBillingDate,
                 'amount_paid' => $package->price,
                 'payment_method' => $paymentMethod,
                 'payment_status' => $paymentStatus,
                 'payment_reference' => $reference,
                 'notes' => $notes,
             ]);
+
+            // Create PlatformTransaction record for wallet payment
+            try {
+                PlatformTransaction::create([
+                    'tenant_id' => $tenant->id,
+                    'reference' => $reference,
+                    'type' => 'subscription',
+                    'amount' => $package->price,
+                    'currency' => 'NGN',
+                    'status' => $paymentStatus === 'completed' ? 'completed' : 'pending',
+                    'payment_gateway' => $paymentMethod,
+                    'approval_status' => $paymentStatus === 'completed' ? 'approved' : null,
+                    'paid_at' => $paymentStatus === 'completed' ? now() : null,
+                    'metadata' => [
+                        'member_subscription_id' => $subscription->id,
+                        'member_id' => $member->id,
+                        'package_id' => $package->id,
+                        'package_name' => $package->name,
+                        'payment_method' => $paymentMethod,
+                        'business_id' => $tenant->id,
+                    ],
+                ]);
+            } catch (\Exception $e) {
+                Log::warning('Failed to create PlatformTransaction for member subscription (wallet)', [
+                    'member_subscription_id' => $subscription->id,
+                    'reference' => $reference,
+                    'error' => $e->getMessage()
+                ]);
+                // Continue even if PlatformTransaction creation fails
+            }
 
             DB::commit();
 

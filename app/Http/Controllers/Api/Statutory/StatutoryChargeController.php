@@ -11,6 +11,7 @@ use App\Models\Tenant\PropertyInterest;
 use App\Models\Tenant\PropertyPaymentTransaction;
 use App\Models\Tenant\PropertyPaymentPlan;
 use App\Services\Tenant\TenantPaymentService;
+use App\Services\Communication\NotificationService;
 use Illuminate\Http\JsonResponse;
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\Auth;
@@ -21,7 +22,8 @@ use Carbon\Carbon;
 class StatutoryChargeController extends Controller
 {
     public function __construct(
-        protected TenantPaymentService $tenantPaymentService
+        protected TenantPaymentService $tenantPaymentService,
+        protected NotificationService $notificationService
     ) {}
     public function index(Request $request): JsonResponse
     {
@@ -80,6 +82,21 @@ class StatutoryChargeController extends Controller
             'created_by' => $request->user()->id,
         ]);
 
+        // Notify admins about new statutory charge submission
+        $memberName = trim($member->first_name . ' ' . $member->last_name);
+        $this->notificationService->notifyAdmins(
+            'info',
+            'New Statutory Charge Submission',
+            "A new statutory charge of ₦" . number_format($charge->amount, 2) . " has been submitted by {$memberName}",
+            [
+                'charge_id' => $charge->id,
+                'member_id' => $member->id,
+                'member_name' => $memberName,
+                'amount' => $charge->amount,
+                'type' => $charge->type,
+            ]
+        );
+
         return response()->json([
             'success' => true,
             'message' => 'Statutory charge created successfully',
@@ -136,6 +153,23 @@ class StatutoryChargeController extends Controller
             'approved_by' => $request->user()->id,
         ]);
 
+        $charge->load('member.user');
+
+        // Notify the member about statutory charge approval
+        if ($charge->member && $charge->member->user) {
+            $this->notificationService->sendNotificationToUsers(
+                [$charge->member->user->id],
+                'success',
+                'Statutory Charge Approved',
+                'Your statutory charge of ₦' . number_format($charge->amount, 2) . ' has been approved.',
+                [
+                    'charge_id' => $charge->id,
+                    'amount' => $charge->amount,
+                    'type' => $charge->type,
+                ]
+            );
+        }
+
         return response()->json([
             'success' => true,
             'message' => 'Statutory charge approved successfully'
@@ -161,6 +195,24 @@ class StatutoryChargeController extends Controller
             'rejected_at' => now(),
             'rejected_by' => $request->user()->id,
         ]);
+
+        $charge->load('member.user');
+
+        // Notify the member about statutory charge rejection
+        if ($charge->member && $charge->member->user) {
+            $this->notificationService->sendNotificationToUsers(
+                [$charge->member->user->id],
+                'warning',
+                'Statutory Charge Rejected',
+                'Your statutory charge of ₦' . number_format($charge->amount, 2) . ' has been rejected. Reason: ' . $request->reason,
+                [
+                    'charge_id' => $charge->id,
+                    'amount' => $charge->amount,
+                    'type' => $charge->type,
+                    'reason' => $request->reason,
+                ]
+            );
+        }
 
         return response()->json([
             'success' => true,

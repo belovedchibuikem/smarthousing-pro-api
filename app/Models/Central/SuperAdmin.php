@@ -7,12 +7,23 @@ use Illuminate\Database\Eloquent\Factories\HasFactory;
 use Illuminate\Foundation\Auth\User as Authenticatable;
 use Laravel\Sanctum\HasApiTokens;
 use Spatie\Permission\Traits\HasRoles;
+use App\Models\Central\PersonalAccessToken;
 
 class SuperAdmin extends Authenticatable
 {
     use HasFactory, HasUuids, HasApiTokens, HasRoles;
 
     protected $connection = 'mysql';
+
+    /**
+     * Get the access tokens that belong to model.
+     *
+     * @return \Illuminate\Database\Eloquent\Relations\MorphMany
+     */
+    public function tokens()
+    {
+        return $this->morphMany(PersonalAccessToken::class, 'tokenable');
+    }
 
     protected $fillable = [
         'email',

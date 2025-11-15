@@ -36,7 +36,7 @@ class UserDashboardController extends Controller
             }
         
             // Safely get wallet
-            $wallet = $member->wallet;
+            $wallet = $user->wallet;
             $walletBalance = $wallet ? (float) $wallet->balance : 0;
         
             // Financial Summary - with error handling

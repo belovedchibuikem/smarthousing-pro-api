@@ -4,8 +4,10 @@ namespace App\Services\Auth;
 
 use App\Models\Tenant\User;
 use App\Models\Tenant\Member;
-use App\Mail\VerificationEmail;
+use App\Models\Tenant\OtpVerification;
+use App\Mail\OtpEmail;
 use Illuminate\Support\Facades\Mail;
+use Illuminate\Support\Facades\Log;
 use Illuminate\Support\Str;
 
 class RegistrationService
@@ -31,10 +33,46 @@ class RegistrationService
         return $prefix . $year . $month . str_pad($newNumber, 4, '0', STR_PAD_LEFT);
     }
 
+    public function generateAndSendOtp(User $user, string $type = 'registration', ?string $phone = null): string
+    {
+        // Generate 6-digit OTP
+        $otp = str_pad(rand(0, 999999), 6, '0', STR_PAD_LEFT);
+        $expiresAt = now()->addMinutes(10);
+
+        // Store OTP (plain text, not hashed, for verification)
+        OtpVerification::updateOrCreate(
+            [
+                'email' => $user->email,
+                'type' => $type,
+            ],
+            [
+                'phone' => $phone,
+                'otp' => $otp, // Store plain OTP
+                'expires_at' => $expiresAt,
+                'is_used' => false,
+                'attempts' => 0,
+            ]
+        );
+
+        // Send OTP email
+        try {
+            Mail::to($user->email)->send(new OtpEmail($user, $otp, $type));
+        } catch (\Exception $e) {
+            Log::error('Failed to send OTP email: ' . $e->getMessage());
+            // Log OTP for development/testing
+            Log::info("OTP for {$user->email} ({$type}): {$otp}");
+        }
+
+        // Also log OTP for development/testing purposes
+        Log::info("OTP generated for {$user->email} ({$type}): {$otp}");
+
+        return $otp;
+    }
+
     public function sendVerificationEmail(User $user): void
     {
         $token = $this->generateVerificationToken();
-        Mail::to($user->email)->send(new VerificationEmail($user, $token));
+        Mail::to($user->email)->send(new \App\Mail\VerificationEmail($user, $token));
     }
 
     public function generateVerificationToken(): string

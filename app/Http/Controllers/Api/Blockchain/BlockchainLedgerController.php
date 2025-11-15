@@ -13,7 +13,7 @@ class BlockchainLedgerController extends Controller
 {
     public function index(Request $request): JsonResponse
     {
-        $user = Auth::user();
+        $user =$request->user();
 
         $query = BlockchainTransaction::query();
 
@@ -56,9 +56,9 @@ class BlockchainLedgerController extends Controller
         ]);
     }
 
-    public function show(BlockchainTransaction $transaction): JsonResponse
+    public function show(Request $request,BlockchainTransaction $transaction): JsonResponse
     {
-        $user = Auth::user();
+        $user = $request->user();
 
         // Check if user can view this transaction
         if (!$user->isAdmin() && $transaction->user_id !== $user->id) {
@@ -72,9 +72,9 @@ class BlockchainLedgerController extends Controller
         ]);
     }
 
-    public function getStats(): JsonResponse
+    public function getStats(Request $request): JsonResponse
     {
-        $user = Auth::user();
+        $user = $request->user();
 
         $query = BlockchainTransaction::query();
 
@@ -84,11 +84,18 @@ class BlockchainLedgerController extends Controller
         }
 
         $totalTransactions = $query->count();
-        $pendingTransactions = $query->where('status', 'pending')->count();
-        $confirmedTransactions = $query->where('status', 'confirmed')->count();
-        $failedTransactions = $query->where('status', 'failed')->count();
+        $pendingTransactions = (clone $query)->where('status', 'pending')->count();
+        $confirmedTransactions = (clone $query)->where('status', 'confirmed')->count();
+        $failedTransactions = (clone $query)->where('status', 'failed')->count();
 
-        $totalVolume = $query->where('status', 'confirmed')->sum('amount');
+        $totalVolume = (clone $query)->where('status', 'confirmed')->sum('amount');
+
+        // Get blockchain network info (from settings or metadata)
+        $networkInfo = [
+            'network' => 'Ethereum', // This could come from tenant settings
+            'network_type' => 'Mainnet',
+            'last_sync' => now()->subMinutes(2)->diffForHumans(),
+        ];
 
         return response()->json([
             'stats' => [
@@ -97,7 +104,84 @@ class BlockchainLedgerController extends Controller
                 'confirmed_transactions' => $confirmedTransactions,
                 'failed_transactions' => $failedTransactions,
                 'total_volume' => $totalVolume,
+                'network_info' => $networkInfo,
             ]
+        ]);
+    }
+
+    /**
+     * Get property ownership records for authenticated user
+     */
+    public function getPropertyOwnership(Request $request): JsonResponse
+    {
+        $user = $request->user();
+        $member = $user->member;
+
+        if (!$member) {
+            return response()->json(['message' => 'Member profile not found'], 404);
+        }
+
+        // Get property interests with blockchain transactions
+        $propertyInterests = \App\Models\Tenant\PropertyInterest::where('member_id', $member->id)
+            ->where('status', 'approved')
+            ->with(['property:id,title,type,location,price'])
+            ->get();
+
+        $ownershipRecords = [];
+
+        foreach ($propertyInterests as $interest) {
+            $property = $interest->property;
+            if (!$property) continue;
+
+            // Get blockchain transactions for this property
+            $blockchainTx = BlockchainTransaction::where('user_id', $user->id)
+                ->where('type', 'payment')
+                ->whereJsonContains('metadata->property_id', $property->id)
+                ->where('status', 'confirmed')
+                ->orderBy('created_at', 'desc')
+                ->first();
+
+            // Calculate ownership percentage and amount paid
+            $totalPaid = \App\Models\Tenant\PropertyPaymentTransaction::where('property_id', $property->id)
+                ->where('member_id', $member->id)
+                ->where('direction', 'credit')
+                ->where('status', 'completed')
+                ->sum('amount');
+
+            $totalPropertyValue = (float) $property->price;
+            $ownershipPercentage = $totalPropertyValue > 0 ? ($totalPaid / $totalPropertyValue) * 100 : 0;
+
+            $ownershipRecords[] = [
+                'property_id' => $property->id,
+                'property_title' => $property->title,
+                'property_type' => $property->type,
+                'property_location' => $property->location,
+                'property_price' => $totalPropertyValue,
+                'ownership_percentage' => round($ownershipPercentage, 2),
+                'amount_paid' => (float) $totalPaid,
+                'blockchain_hash' => $blockchainTx?->hash,
+                'certificate_date' => $blockchainTx?->confirmed_at?->toDateString() ?? $interest->created_at->toDateString(),
+                'is_verified' => $blockchainTx !== null,
+                'transactions' => BlockchainTransaction::where('user_id', $user->id)
+                    ->where('type', 'payment')
+                    ->whereJsonContains('metadata->property_id', $property->id)
+                    ->orderBy('created_at', 'desc')
+                    ->get(['id', 'hash', 'amount', 'status', 'confirmed_at', 'created_at'])
+                    ->map(function ($tx) {
+                        return [
+                            'hash' => $tx->hash,
+                            'amount' => (float) $tx->amount,
+                            'status' => $tx->status,
+                            'date' => $tx->created_at->toDateString(),
+                            'confirmed_at' => $tx->confirmed_at?->toDateString(),
+                        ];
+                    }),
+            ];
+        }
+
+        return response()->json([
+            'success' => true,
+            'ownership_records' => $ownershipRecords,
         ]);
     }
 

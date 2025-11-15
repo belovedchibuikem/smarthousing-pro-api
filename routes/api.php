@@ -56,8 +56,8 @@ Route::options('{any}', function (Request $request) {
         ->header('Access-Control-Max-Age', '86400');
 })->where('any', '.*');
 
-// Public routes (no authentication required)
-Route::prefix('auth')->group(function () {
+// Public routes (no authentication required, but tenant context needed for registration/login)
+Route::middleware(['tenant'])->prefix('auth')->group(function () {
     Route::post('register', [RegisterController::class, 'register']);
     Route::post('login', [LoginController::class, 'login']);
     Route::post('verify-otp', [App\Http\Controllers\Api\Auth\OtpController::class, 'verifyOtp']);
@@ -87,115 +87,117 @@ Route::middleware(['tenant', 'tenant_auth'])->group(function () {
     });
 
 
-    // AI recommendations
-    Route::get('ai/recommendations', [App\Http\Controllers\Api\AI\RecommendationController::class, 'index']);
-
-    // Loan Products routes
-    Route::prefix('loans')->group(function () {
-        Route::get('/products', [App\Http\Controllers\Api\Loans\LoanProductController::class, 'index']);
-        Route::get('/products/{product}', [App\Http\Controllers\Api\Loans\LoanProductController::class, 'show']);
+    // AI recommendations - requires active subscription
+    Route::middleware(['member_subscription'])->group(function () {
+        Route::get('ai/recommendations', [App\Http\Controllers\Api\AI\RecommendationController::class, 'index']);
     });
 
-    // Investment Plans routes
-    Route::prefix('investments')->group(function () {
-        Route::get('/plans', [App\Http\Controllers\Api\Investments\InvestmentPlanController::class, 'index']);
-        Route::get('/plans/{plan}', [App\Http\Controllers\Api\Investments\InvestmentPlanController::class, 'show']);
-    });
+    // User routes that require active subscription (wrapped in middleware)
+    Route::middleware(['member_subscription'])->group(function () {
+        // Loan Products routes
+        Route::prefix('loans')->group(function () {
+            Route::get('/products', [App\Http\Controllers\Api\Loans\LoanProductController::class, 'index']);
+            Route::get('/products/{product}', [App\Http\Controllers\Api\Loans\LoanProductController::class, 'show']);
+        });
 
-    // Wallet Transfer routes
-    Route::prefix('wallet')->group(function () {
-        Route::post('/transfer', [App\Http\Controllers\Api\Wallet\WalletTransferController::class, 'transfer']);
-        Route::get('/transfer-history', [App\Http\Controllers\Api\Wallet\WalletTransferController::class, 'getTransferHistory']);
-    });
+        // Investment Plans routes
+        Route::prefix('investments')->group(function () {
+            Route::get('/plans', [App\Http\Controllers\Api\Investments\InvestmentPlanController::class, 'index']);
+            Route::get('/plans/{plan}', [App\Http\Controllers\Api\Investments\InvestmentPlanController::class, 'show']);
+            Route::get('/payment-methods', [App\Http\Controllers\Api\User\InvestmentController::class, 'paymentMethods']);
+            Route::post('/pay', [App\Http\Controllers\Api\User\InvestmentController::class, 'pay']);
+        });
 
-    // Mail Service routes
-    Route::prefix('mail')->group(function () {
-        Route::get('/', [App\Http\Controllers\Api\Mail\MailServiceController::class, 'index']);
-        Route::post('/compose', [App\Http\Controllers\Api\Mail\MailServiceController::class, 'compose']);
-        Route::get('/{mail}', [App\Http\Controllers\Api\Mail\MailServiceController::class, 'show']);
-        Route::post('/{mail}/reply', [App\Http\Controllers\Api\Mail\MailServiceController::class, 'reply']);
-        Route::patch('/{mail}/read', [App\Http\Controllers\Api\Mail\MailServiceController::class, 'markAsRead']);
-        Route::patch('/{mail}/unread', [App\Http\Controllers\Api\Mail\MailServiceController::class, 'markAsUnread']);
-        Route::patch('/{mail}/trash', [App\Http\Controllers\Api\Mail\MailServiceController::class, 'moveToTrash']);
-        Route::delete('/{mail}', [App\Http\Controllers\Api\Mail\MailServiceController::class, 'delete']);
-        Route::get('/unread/count', [App\Http\Controllers\Api\Mail\MailServiceController::class, 'getUnreadCount']);
-    });
+        // Wallet Transfer routes
+        Route::prefix('wallet')->group(function () {
+            Route::post('/transfer', [App\Http\Controllers\Api\Wallet\WalletTransferController::class, 'transfer']);
+            Route::get('/transfer-history', [App\Http\Controllers\Api\Wallet\WalletTransferController::class, 'getTransferHistory']);
+        });
 
-    // Blockchain Ledger routes
-    Route::prefix('blockchain')->group(function () {
-        Route::get('/transactions', [App\Http\Controllers\Api\Blockchain\BlockchainLedgerController::class, 'index']);
-        Route::get('/transactions/{transaction}', [App\Http\Controllers\Api\Blockchain\BlockchainLedgerController::class, 'show']);
-        Route::get('/stats', [App\Http\Controllers\Api\Blockchain\BlockchainLedgerController::class, 'getStats']);
-        Route::post('/verify/{hash}', [App\Http\Controllers\Api\Blockchain\BlockchainLedgerController::class, 'verifyTransaction']);
-    });
+        // Mail Service routes
+        Route::prefix('mail')->group(function () {
+            Route::get('/', [App\Http\Controllers\Api\Mail\MailServiceController::class, 'index']);
+            Route::post('/compose', [App\Http\Controllers\Api\Mail\MailServiceController::class, 'compose']);
+            Route::get('/{mail}', [App\Http\Controllers\Api\Mail\MailServiceController::class, 'show']);
+            Route::post('/{mail}/reply', [App\Http\Controllers\Api\Mail\MailServiceController::class, 'reply']);
+            Route::patch('/{mail}/read', [App\Http\Controllers\Api\Mail\MailServiceController::class, 'markAsRead']);
+            Route::patch('/{mail}/unread', [App\Http\Controllers\Api\Mail\MailServiceController::class, 'markAsUnread']);
+            Route::patch('/{mail}/trash', [App\Http\Controllers\Api\Mail\MailServiceController::class, 'moveToTrash']);
+            Route::delete('/{mail}', [App\Http\Controllers\Api\Mail\MailServiceController::class, 'delete']);
+            Route::get('/unread/count', [App\Http\Controllers\Api\Mail\MailServiceController::class, 'getUnreadCount']);
+        });
 
-    // Loan routes
-    Route::prefix('loans')->group(function () {
-        Route::get('/payment-methods', [App\Http\Controllers\Api\Loans\LoanRepaymentController::class, 'paymentMethods']);
+        // Blockchain Ledger routes
+        Route::prefix('blockchain')->group(function () {
+            Route::get('/transactions', [App\Http\Controllers\Api\Blockchain\BlockchainLedgerController::class, 'index']);
+            Route::get('/transactions/{transaction}', [App\Http\Controllers\Api\Blockchain\BlockchainLedgerController::class, 'show']);
+            Route::get('/stats', [App\Http\Controllers\Api\Blockchain\BlockchainLedgerController::class, 'getStats']);
+            Route::get('/property-ownership', [App\Http\Controllers\Api\Blockchain\BlockchainLedgerController::class, 'getPropertyOwnership']);
+            Route::post('/verify/{hash}', [App\Http\Controllers\Api\Blockchain\BlockchainLedgerController::class, 'verifyTransaction']);
+        });
 
-        Route::post('/apply', [App\Http\Controllers\Api\Loans\LoanApplicationController::class, 'apply']);
-        Route::get('/my-applications', [App\Http\Controllers\Api\Loans\LoanApplicationController::class, 'getMyApplications']);
-        Route::get('/application/{loanId}/status', [App\Http\Controllers\Api\Loans\LoanApplicationController::class, 'getApplicationStatus']);
+        // Loan routes
+        Route::prefix('loans')->group(function () {
+            Route::get('/payment-methods', [App\Http\Controllers\Api\Loans\LoanRepaymentController::class, 'paymentMethods']);
 
-        Route::post('/{loan}/repay', [App\Http\Controllers\Api\Loans\LoanRepaymentController::class, 'repay']);
-        Route::get('/{loan}/repayment-schedule', [App\Http\Controllers\Api\Loans\LoanRepaymentController::class, 'getRepaymentSchedule']);
-        Route::get('/{loan}/repayment-history', [App\Http\Controllers\Api\Loans\LoanRepaymentController::class, 'getRepaymentHistory']);
+            Route::post('/apply', [App\Http\Controllers\Api\Loans\LoanApplicationController::class, 'apply']);
+            Route::get('/my-applications', [App\Http\Controllers\Api\Loans\LoanApplicationController::class, 'getMyApplications']);
+            Route::get('/application/{loanId}/status', [App\Http\Controllers\Api\Loans\LoanApplicationController::class, 'getApplicationStatus']);
 
-        Route::get('/{loanId}', [App\Http\Controllers\Api\Loans\LoanApplicationController::class, 'show']);
-    });
+            Route::post('/{loan}/repay', [App\Http\Controllers\Api\Loans\LoanRepaymentController::class, 'repay']);
+            Route::get('/{loan}/repayment-schedule', [App\Http\Controllers\Api\Loans\LoanRepaymentController::class, 'getRepaymentSchedule']);
+            Route::get('/{loan}/repayment-history', [App\Http\Controllers\Api\Loans\LoanRepaymentController::class, 'getRepaymentHistory']);
 
-    // Property Management routes
-    Route::prefix('properties')->group(function () {
-        Route::get('/manage', [App\Http\Controllers\Api\Properties\PropertyManagementController::class, 'index']);
-        Route::post('/manage', [App\Http\Controllers\Api\Properties\PropertyManagementController::class, 'store']);
-        Route::get('/manage/{property}', [App\Http\Controllers\Api\Properties\PropertyManagementController::class, 'show']);
-        Route::put('/manage/{property}', [App\Http\Controllers\Api\Properties\PropertyManagementController::class, 'update']);
-        Route::post('/manage/{property}/allocate', [App\Http\Controllers\Api\Properties\PropertyManagementController::class, 'allocate']);
-        Route::post('/manage/{property}/deallocate', [App\Http\Controllers\Api\Properties\PropertyManagementController::class, 'deallocate']);
-        Route::get('/available', [App\Http\Controllers\Api\Properties\PropertyManagementController::class, 'getAvailableProperties']);
-        Route::get('/my', [App\Http\Controllers\Api\Properties\PropertyManagementController::class, 'myProperties']);
-        Route::get('/{property}/payment-setup', [App\Http\Controllers\Api\Properties\PropertyManagementController::class, 'paymentSetup']);
-        Route::post('/{property}/payments', [App\Http\Controllers\Api\Properties\PropertyManagementController::class, 'recordPayment']);
-        Route::get('/manage/{property}/allocations', [App\Http\Controllers\Api\Properties\PropertyManagementController::class, 'getPropertyAllocations']);
-        Route::post('/mortgages/{mortgage}/approve-schedule', [App\Http\Controllers\Api\Properties\PropertyManagementController::class, 'approveMortgageSchedule']);
-        Route::post('/internal-mortgages/{plan}/approve-schedule', [App\Http\Controllers\Api\Properties\PropertyManagementController::class, 'approveInternalMortgageSchedule']);
-        Route::post('/transfer', [App\Http\Controllers\Api\Properties\PropertyTransferController::class, 'transfer']);
-        Route::get('/transfer-history', [App\Http\Controllers\Api\Properties\PropertyTransferController::class, 'getTransferHistory']);
-    });
+            Route::get('/{loanId}', [App\Http\Controllers\Api\Loans\LoanApplicationController::class, 'show']);
+        });
 
-    // Advanced Reports routes
-    Route::prefix('reports')->group(function () {
-        Route::get('/financial-summary', [App\Http\Controllers\Api\Reports\AdvancedReportsController::class, 'financialSummary']);
-        Route::get('/member-analytics', [App\Http\Controllers\Api\Reports\AdvancedReportsController::class, 'memberAnalytics']);
-        Route::get('/loan-analytics', [App\Http\Controllers\Api\Reports\AdvancedReportsController::class, 'loanAnalytics']);
-        Route::get('/contribution-analytics', [App\Http\Controllers\Api\Reports\AdvancedReportsController::class, 'contributionAnalytics']);
-        Route::get('/property-analytics', [App\Http\Controllers\Api\Reports\AdvancedReportsController::class, 'propertyAnalytics']);
-        Route::get('/monthly-trends', [App\Http\Controllers\Api\Reports\AdvancedReportsController::class, 'monthlyTrends']);
-        Route::post('/export', [App\Http\Controllers\Api\Reports\AdvancedReportsController::class, 'exportReport']);
-    });
+        // Property Management routes
+        Route::prefix('properties')->group(function () {
+            Route::get('/manage', [App\Http\Controllers\Api\Properties\PropertyManagementController::class, 'index']);
+            Route::post('/manage', [App\Http\Controllers\Api\Properties\PropertyManagementController::class, 'store']);
+            Route::get('/manage/{property}', [App\Http\Controllers\Api\Properties\PropertyManagementController::class, 'show']);
+            Route::put('/manage/{property}', [App\Http\Controllers\Api\Properties\PropertyManagementController::class, 'update']);
+            Route::post('/manage/{property}/allocate', [App\Http\Controllers\Api\Properties\PropertyManagementController::class, 'allocate']);
+            Route::post('/manage/{property}/deallocate', [App\Http\Controllers\Api\Properties\PropertyManagementController::class, 'deallocate']);
+            Route::get('/available', [App\Http\Controllers\Api\Properties\PropertyManagementController::class, 'getAvailableProperties']);
+            Route::get('/my', [App\Http\Controllers\Api\Properties\PropertyManagementController::class, 'myProperties']);
+            Route::get('/{property}/payment-setup', [App\Http\Controllers\Api\Properties\PropertyManagementController::class, 'paymentSetup']);
+            Route::post('/{property}/payments', [App\Http\Controllers\Api\Properties\PropertyManagementController::class, 'recordPayment']);
+            Route::get('/manage/{property}/allocations', [App\Http\Controllers\Api\Properties\PropertyManagementController::class, 'getPropertyAllocations']);
+            Route::post('/mortgages/{mortgage}/approve-schedule', [App\Http\Controllers\Api\Properties\PropertyManagementController::class, 'approveMortgageSchedule']);
+            Route::post('/internal-mortgages/{plan}/approve-schedule', [App\Http\Controllers\Api\Properties\PropertyManagementController::class, 'approveInternalMortgageSchedule']);
+            Route::post('/transfer', [App\Http\Controllers\Api\Properties\PropertyTransferController::class, 'transfer']);
+            Route::get('/transfer-history', [App\Http\Controllers\Api\Properties\PropertyTransferController::class, 'getTransferHistory']);
+        });
 
-   
-    // Wallet Top-up routes
-    Route::prefix('wallet')->group(function () {
-        Route::post('/top-up', [App\Http\Controllers\Api\Wallet\WalletTopUpController::class, 'topUp']);
-        Route::get('/top-up/verify/{reference}', [App\Http\Controllers\Api\Wallet\WalletTopUpController::class, 'verifyTopUp']);
-        Route::get('/top-up/history', [App\Http\Controllers\Api\Wallet\WalletTopUpController::class, 'getTopUpHistory']);
-    });
+        // Wallet Top-up routes
+        Route::prefix('wallet')->group(function () {
+            Route::post('/top-up', [App\Http\Controllers\Api\Wallet\WalletTopUpController::class, 'topUp']);
+            Route::get('/top-up/verify/{reference}', [App\Http\Controllers\Api\Wallet\WalletTopUpController::class, 'verifyTopUp']);
+            Route::get('/top-up/history', [App\Http\Controllers\Api\Wallet\WalletTopUpController::class, 'getTopUpHistory']);
+        });
 
-    // Investment Withdrawal routes
-    Route::prefix('investments')->group(function () {
-        Route::post('/{investment}/withdraw', [App\Http\Controllers\Api\Investments\InvestmentWithdrawalController::class, 'withdraw']);
-        Route::get('/{investment}/withdrawal-history', [App\Http\Controllers\Api\Investments\InvestmentWithdrawalController::class, 'getWithdrawalHistory']);
-        Route::get('/{investment}/withdrawal-options', [App\Http\Controllers\Api\Investments\InvestmentWithdrawalController::class, 'getWithdrawalOptions']);
-    });
+        // Investment Withdrawal routes
+        Route::prefix('investments')->group(function () {
+            Route::post('/{investment}/withdraw', [App\Http\Controllers\Api\Investments\InvestmentWithdrawalController::class, 'withdraw']);
+            Route::get('/{investment}/withdrawal-history', [App\Http\Controllers\Api\Investments\InvestmentWithdrawalController::class, 'getWithdrawalHistory']);
+            Route::get('/{investment}/withdrawal-options', [App\Http\Controllers\Api\Investments\InvestmentWithdrawalController::class, 'getWithdrawalOptions']);
+        });
 
-
-    // User routes
-    Route::prefix('user')->group(function () {
-        Route::get('profile', [App\Http\Controllers\Api\User\ProfileController::class, 'show']);
+        // User routes
+        Route::prefix('user')->group(function () {
+            Route::get('profile', [App\Http\Controllers\Api\User\ProfileController::class, 'show']);
         Route::put('profile', [App\Http\Controllers\Api\User\ProfileController::class, 'update']);
         Route::post('profile/avatar', [App\Http\Controllers\Api\User\ProfileController::class, 'uploadAvatar']);
         Route::post('profile/upload-payment-evidence', [App\Http\Controllers\Api\User\ProfileController::class, 'uploadPaymentEvidence']);
+        
+        // User Settings routes
+        Route::prefix('settings')->group(function () {
+            Route::get('/', [App\Http\Controllers\Api\User\UserSettingsController::class, 'index']);
+            Route::put('/', [App\Http\Controllers\Api\User\UserSettingsController::class, 'update']);
+            Route::post('/change-password', [App\Http\Controllers\Api\User\UserSettingsController::class, 'changePassword']);
+            Route::post('/two-factor', [App\Http\Controllers\Api\User\UserSettingsController::class, 'toggleTwoFactor']);
+        });
         
         Route::prefix('kyc')->group(function () {
             Route::get('/', [App\Http\Controllers\Api\User\KycController::class, 'show']);
@@ -242,6 +244,16 @@ Route::middleware(['tenant', 'tenant_auth'])->group(function () {
 
         // Member Reports routes
         Route::prefix('reports')->group(function () {
+            // Export routes must come FIRST (more specific routes before less specific ones)
+            Route::get('/contributions/export', [App\Http\Controllers\Api\Reports\MemberReportsController::class, 'exportContributions']);
+            Route::get('/equity-contributions/export', [App\Http\Controllers\Api\Reports\MemberReportsController::class, 'exportEquityContributions']);
+            Route::get('/investments/export', [App\Http\Controllers\Api\Reports\MemberReportsController::class, 'exportInvestments']);
+            Route::get('/loans/export', [App\Http\Controllers\Api\Reports\MemberReportsController::class, 'exportLoans']);
+            Route::get('/properties/export', [App\Http\Controllers\Api\Reports\MemberReportsController::class, 'exportProperties']);
+            Route::get('/financial-summary/export', [App\Http\Controllers\Api\Reports\MemberReportsController::class, 'exportFinancialSummary']);
+            Route::get('/mortgages/export', [App\Http\Controllers\Api\Reports\MemberReportsController::class, 'exportMortgages']);
+            
+            // Regular report routes (less specific, must come after export routes)
             Route::get('/contributions', [App\Http\Controllers\Api\Reports\MemberReportsController::class, 'contributions']);
             Route::get('/equity-contributions', [App\Http\Controllers\Api\Reports\MemberReportsController::class, 'equityContributions']);
             Route::get('/investments', [App\Http\Controllers\Api\Reports\MemberReportsController::class, 'investments']);
@@ -311,6 +323,25 @@ Route::middleware(['tenant', 'tenant_auth'])->group(function () {
         Route::get('callback', [App\Http\Controllers\Api\Subscriptions\SubscriptionController::class, 'callback']);
     });
 
+    // User/Member Notifications routes (direct access for frontend)
+    Route::prefix('notifications')->group(function () {
+        Route::get('/', [App\Http\Controllers\Api\Communication\NotificationController::class, 'index']);
+        Route::post('/', [App\Http\Controllers\Api\Communication\NotificationController::class, 'store']);
+        Route::get('/unread-count', [App\Http\Controllers\Api\Communication\NotificationController::class, 'unreadCount']);
+        Route::post('/mark-all-read', [App\Http\Controllers\Api\Communication\NotificationController::class, 'markAllAsRead']);
+        Route::get('/{notification}', [App\Http\Controllers\Api\Communication\NotificationController::class, 'show']);
+        Route::post('/{notification}/read', [App\Http\Controllers\Api\Communication\NotificationController::class, 'markAsRead']);
+        Route::delete('/{notification}', [App\Http\Controllers\Api\Communication\NotificationController::class, 'destroy']);
+    });
+
+    // User/Member Refund Request routes (ticket-based)
+    Route::prefix('refunds')->group(function () {
+        Route::get('/', [App\Http\Controllers\Api\User\RefundController::class, 'index']);
+        Route::get('/stats', [App\Http\Controllers\Api\User\RefundController::class, 'stats']);
+        Route::post('/', [App\Http\Controllers\Api\User\RefundController::class, 'store']);
+        Route::get('/{id}', [App\Http\Controllers\Api\User\RefundController::class, 'show']);
+    });
+
     // Communication routes
     Route::prefix('communication')->group(function () {
         Route::prefix('mail')->group(function () {
@@ -330,16 +361,6 @@ Route::middleware(['tenant', 'tenant_auth'])->group(function () {
             Route::post('/{mail}/star', [App\Http\Controllers\Api\Communication\MailController::class, 'toggleStar']);
             Route::post('/{mail}/reply', [App\Http\Controllers\Api\Communication\MailController::class, 'reply']);
             Route::delete('/{mail}', [App\Http\Controllers\Api\Communication\MailController::class, 'destroy']);
-        });
-        
-        Route::prefix('notifications')->group(function () {
-            Route::get('/', [App\Http\Controllers\Api\Communication\NotificationController::class, 'index']);
-            Route::post('/', [App\Http\Controllers\Api\Communication\NotificationController::class, 'store']);
-            Route::get('/{notification}', [App\Http\Controllers\Api\Communication\NotificationController::class, 'show']);
-            Route::post('/{notification}/read', [App\Http\Controllers\Api\Communication\NotificationController::class, 'markAsRead']);
-            Route::post('/mark-all-read', [App\Http\Controllers\Api\Communication\NotificationController::class, 'markAllAsRead']);
-            Route::get('/unread-count', [App\Http\Controllers\Api\Communication\NotificationController::class, 'unreadCount']);
-            Route::delete('/{notification}', [App\Http\Controllers\Api\Communication\NotificationController::class, 'destroy']);
         });
     });
 
@@ -446,174 +467,20 @@ Route::middleware(['tenant', 'tenant_auth'])->group(function () {
 
 });
 
+// Reports routes
+Route::prefix('reports')->group(function () {
+    Route::get('/dashboard', [App\Http\Controllers\Api\Reports\FinancialReportController::class, 'dashboard']);
+    Route::get('/loans', [App\Http\Controllers\Api\Reports\FinancialReportController::class, 'loans']);
+    Route::get('/investments', [App\Http\Controllers\Api\Reports\FinancialReportController::class, 'investments']);
+    Route::get('/contributions', [App\Http\Controllers\Api\Reports\FinancialReportController::class, 'contributions']);
+    Route::get('/payments', [App\Http\Controllers\Api\Reports\FinancialReportController::class, 'payments']);
+    Route::get('/monthly-trends', [App\Http\Controllers\Api\Reports\FinancialReportController::class, 'monthlyTrends']);
+});
+ 
 
+}); // End member_subscription middleware group
 
-// Super Admin routes (moved outside admin group to avoid middleware conflicts)
-Route::prefix('super-admin')->middleware(['super_admin_auth'])->group(function () {
-    // Profile routes
-    Route::prefix('profile')->group(function () {
-        Route::get('/', [App\Http\Controllers\Api\SuperAdmin\SuperAdminProfileController::class, 'show']);
-        Route::put('/', [App\Http\Controllers\Api\SuperAdmin\SuperAdminProfileController::class, 'update']);
-        Route::post('/change-password', [App\Http\Controllers\Api\SuperAdmin\SuperAdminProfileController::class, 'changePassword']);
-    });
-
-    // Notification routes
-    Route::prefix('notifications')->group(function () {
-        Route::get('/', [App\Http\Controllers\Api\SuperAdmin\SuperAdminNotificationController::class, 'index']);
-        Route::get('/{notification}', [App\Http\Controllers\Api\SuperAdmin\SuperAdminNotificationController::class, 'show']);
-        Route::post('/{notification}/read', [App\Http\Controllers\Api\SuperAdmin\SuperAdminNotificationController::class, 'markAsRead']);
-        Route::post('/mark-all-read', [App\Http\Controllers\Api\SuperAdmin\SuperAdminNotificationController::class, 'markAllAsRead']);
-        Route::get('/unread-count', [App\Http\Controllers\Api\SuperAdmin\SuperAdminNotificationController::class, 'unreadCount']);
-        Route::delete('/{notification}', [App\Http\Controllers\Api\SuperAdmin\SuperAdminNotificationController::class, 'destroy']);
-    });
-
-    Route::prefix('businesses')->group(function () {
-        Route::get('/', [App\Http\Controllers\Api\SuperAdmin\BusinessController::class, 'index']);
-        Route::post('/', [App\Http\Controllers\Api\SuperAdmin\BusinessController::class, 'store']);
-        Route::get('/{business}', [App\Http\Controllers\Api\SuperAdmin\BusinessController::class, 'show']);
-        Route::put('/{business}', [App\Http\Controllers\Api\SuperAdmin\BusinessController::class, 'update']);
-        Route::post('/{business}/suspend', [App\Http\Controllers\Api\SuperAdmin\BusinessController::class, 'suspend']);
-        Route::post('/{business}/activate', [App\Http\Controllers\Api\SuperAdmin\BusinessController::class, 'activate']);
-        Route::delete('/{business}', [App\Http\Controllers\Api\SuperAdmin\BusinessController::class, 'destroy']);
-        
-        // Business domains management
-        Route::prefix('{business}/domains')->group(function () {
-            Route::get('/', [App\Http\Controllers\Api\SuperAdmin\BusinessController::class, 'domains']);
-            Route::post('/', [App\Http\Controllers\Api\SuperAdmin\BusinessController::class, 'addDomain']);
-            Route::post('/{domain}/verify', [App\Http\Controllers\Api\SuperAdmin\BusinessController::class, 'verifyDomain']);
-            Route::delete('/{domain}', [App\Http\Controllers\Api\SuperAdmin\BusinessController::class, 'deleteDomain']);
-        });
-    });
-
-    // Tenant provisioning
-    Route::post('/tenants', [App\Http\Controllers\Api\SuperAdmin\TenantProvisioningController::class, 'store']);
     
-    Route::prefix('packages')->group(function () {
-        Route::get('/', [App\Http\Controllers\Api\SuperAdmin\PackageController::class, 'index']);
-        Route::post('/', [App\Http\Controllers\Api\SuperAdmin\PackageController::class, 'store']);
-        Route::get('/{package}', [App\Http\Controllers\Api\SuperAdmin\PackageController::class, 'show']);
-        Route::put('/{package}', [App\Http\Controllers\Api\SuperAdmin\PackageController::class, 'update']);
-        Route::post('/{package}/toggle', [App\Http\Controllers\Api\SuperAdmin\PackageController::class, 'toggle']);
-        Route::delete('/{package}', [App\Http\Controllers\Api\SuperAdmin\PackageController::class, 'destroy']);
-    });
-
-    Route::prefix('modules')->group(function () {
-        Route::get('/', [App\Http\Controllers\Api\SuperAdmin\ModuleController::class, 'index']);
-        Route::post('/', [App\Http\Controllers\Api\SuperAdmin\ModuleController::class, 'store']);
-        Route::get('/{module}', [App\Http\Controllers\Api\SuperAdmin\ModuleController::class, 'show']);
-        Route::put('/{module}', [App\Http\Controllers\Api\SuperAdmin\ModuleController::class, 'update']);
-        Route::post('/{module}/toggle', [App\Http\Controllers\Api\SuperAdmin\ModuleController::class, 'toggle']);
-        Route::delete('/{module}', [App\Http\Controllers\Api\SuperAdmin\ModuleController::class, 'destroy']);
-    });
-
-    Route::prefix('white-label-packages')->group(function () {
-        Route::get('/', [App\Http\Controllers\Api\SuperAdmin\WhiteLabelPackageController::class, 'index']);
-        Route::post('/', [App\Http\Controllers\Api\SuperAdmin\WhiteLabelPackageController::class, 'store']);
-        Route::get('/{whiteLabelPackage}', [App\Http\Controllers\Api\SuperAdmin\WhiteLabelPackageController::class, 'show']);
-        Route::put('/{whiteLabelPackage}', [App\Http\Controllers\Api\SuperAdmin\WhiteLabelPackageController::class, 'update']);
-        Route::post('/{whiteLabelPackage}/toggle', [App\Http\Controllers\Api\SuperAdmin\WhiteLabelPackageController::class, 'toggle']);
-        Route::delete('/{whiteLabelPackage}', [App\Http\Controllers\Api\SuperAdmin\WhiteLabelPackageController::class, 'destroy']);
-    });
-        
-    Route::prefix('analytics')->group(function () {
-        Route::get('/dashboard', [App\Http\Controllers\Api\SuperAdmin\AnalyticsController::class, 'dashboard']);
-        Route::get('/revenue', [App\Http\Controllers\Api\SuperAdmin\AnalyticsController::class, 'revenue']);
-        Route::get('/businesses', [App\Http\Controllers\Api\SuperAdmin\AnalyticsController::class, 'businesses']);
-        Route::get('/activity', [App\Http\Controllers\Api\SuperAdmin\AnalyticsController::class, 'activity']);
-        Route::get('/test', [App\Http\Controllers\Api\SuperAdmin\AnalyticsController::class, 'test']);
-    });
-
-    Route::prefix('mail')->group(function () {
-        Route::get('/', [App\Http\Controllers\Api\SuperAdmin\SuperAdminMailController::class, 'index']);
-        Route::post('/send', [App\Http\Controllers\Api\SuperAdmin\SuperAdminMailController::class, 'sendMail']);
-        Route::post('/save-template', [App\Http\Controllers\Api\SuperAdmin\SuperAdminMailController::class, 'saveTemplate']);
-        Route::get('/templates', [App\Http\Controllers\Api\SuperAdmin\SuperAdminMailController::class, 'getTemplates']);
-        Route::get('/history', [App\Http\Controllers\Api\SuperAdmin\SuperAdminMailController::class, 'getHistory']);
-    });
-
-    Route::prefix('admins')->group(function () {
-        Route::get('/', [App\Http\Controllers\Api\SuperAdmin\SuperAdminManagementController::class, 'index']);
-        Route::post('/', [App\Http\Controllers\Api\SuperAdmin\SuperAdminManagementController::class, 'store']);
-        Route::get('/{admin}', [App\Http\Controllers\Api\SuperAdmin\SuperAdminManagementController::class, 'show']);
-        Route::put('/{admin}', [App\Http\Controllers\Api\SuperAdmin\SuperAdminManagementController::class, 'update']);
-        Route::delete('/{admin}', [App\Http\Controllers\Api\SuperAdmin\SuperAdminManagementController::class, 'destroy']);
-        Route::post('/{admin}/toggle-status', [App\Http\Controllers\Api\SuperAdmin\SuperAdminManagementController::class, 'toggleStatus']);
-    });
-
-    Route::prefix('roles')->group(function () {
-        Route::get('/', [App\Http\Controllers\Api\SuperAdmin\SuperAdminRoleController::class, 'index']);
-        Route::post('/', [App\Http\Controllers\Api\SuperAdmin\SuperAdminRoleController::class, 'store']);
-        Route::get('/{role}', [App\Http\Controllers\Api\SuperAdmin\SuperAdminRoleController::class, 'show']);
-        Route::put('/{role}', [App\Http\Controllers\Api\SuperAdmin\SuperAdminRoleController::class, 'update']);
-        Route::delete('/{role}', [App\Http\Controllers\Api\SuperAdmin\SuperAdminRoleController::class, 'destroy']);
-        Route::get('/{role}/permissions', [App\Http\Controllers\Api\SuperAdmin\SuperAdminRoleController::class, 'getRolePermissions']);
-    });
-
-    Route::prefix('permissions')->group(function () {
-        Route::get('/', [App\Http\Controllers\Api\SuperAdmin\SuperAdminPermissionController::class, 'index']);
-        Route::post('/', [App\Http\Controllers\Api\SuperAdmin\SuperAdminPermissionController::class, 'store']);
-        Route::get('/grouped', [App\Http\Controllers\Api\SuperAdmin\SuperAdminPermissionController::class, 'getGroupedPermissions']);
-        Route::get('/{permission}', [App\Http\Controllers\Api\SuperAdmin\SuperAdminPermissionController::class, 'show']);
-        Route::put('/{permission}', [App\Http\Controllers\Api\SuperAdmin\SuperAdminPermissionController::class, 'update']);
-        Route::delete('/{permission}', [App\Http\Controllers\Api\SuperAdmin\SuperAdminPermissionController::class, 'destroy']);
-    });
-
-    Route::prefix('settings')->group(function () {
-        Route::get('/', [App\Http\Controllers\Api\SuperAdmin\PlatformSettingsController::class, 'index']);
-        Route::post('/', [App\Http\Controllers\Api\SuperAdmin\PlatformSettingsController::class, 'store']);
-        Route::post('/bulk-update', [App\Http\Controllers\Api\SuperAdmin\PlatformSettingsController::class, 'bulkUpdate']);
-        Route::post('/test-email', [App\Http\Controllers\Api\SuperAdmin\PlatformSettingsController::class, 'testEmailSettings']);
-        Route::get('/category/{category}', [App\Http\Controllers\Api\SuperAdmin\PlatformSettingsController::class, 'getByCategory']);
-        Route::get('/{setting}', [App\Http\Controllers\Api\SuperAdmin\PlatformSettingsController::class, 'show']);
-        Route::put('/{setting}', [App\Http\Controllers\Api\SuperAdmin\PlatformSettingsController::class, 'update']);
-        Route::delete('/{setting}', [App\Http\Controllers\Api\SuperAdmin\PlatformSettingsController::class, 'destroy']);
-    });
-
-    // Dashboard routes
-    Route::prefix('dashboard')->group(function () {
-        Route::get('/overview', [App\Http\Controllers\Api\SuperAdmin\DashboardController::class, 'overview']);
-        Route::get('/metrics', [App\Http\Controllers\Api\SuperAdmin\DashboardController::class, 'metrics']);
-        Route::get('/recent-businesses', [App\Http\Controllers\Api\SuperAdmin\DashboardController::class, 'recentBusinesses']);
-        Route::get('/revenue-analytics', [App\Http\Controllers\Api\SuperAdmin\DashboardController::class, 'revenueAnalytics']);
-        Route::get('/subscription-analytics', [App\Http\Controllers\Api\SuperAdmin\DashboardController::class, 'subscriptionAnalytics']);
-        Route::get('/system-health', [App\Http\Controllers\Api\SuperAdmin\DashboardController::class, 'systemHealth']);
-        Route::get('/alerts', [App\Http\Controllers\Api\SuperAdmin\DashboardController::class, 'alerts']);
-        Route::get('/platform-stats', [App\Http\Controllers\Api\SuperAdmin\DashboardController::class, 'platformStats']);
-        Route::get('/test-member-count', [App\Http\Controllers\Api\SuperAdmin\DashboardController::class, 'testMemberCount']);
-    });
-        
-    Route::prefix('subscriptions')->group(function () {
-        Route::get('/', [App\Http\Controllers\Api\SuperAdmin\BusinessSubscriptionController::class, 'index']);
-        Route::get('/{subscription}', [App\Http\Controllers\Api\SuperAdmin\BusinessSubscriptionController::class, 'show']);
-        Route::post('/{subscription}/cancel', [App\Http\Controllers\Api\SuperAdmin\BusinessSubscriptionController::class, 'cancel']);
-        Route::post('/{subscription}/reactivate', [App\Http\Controllers\Api\SuperAdmin\BusinessSubscriptionController::class, 'reactivate']);
-        Route::post('/{subscription}/extend', [App\Http\Controllers\Api\SuperAdmin\BusinessSubscriptionController::class, 'extend']);
-    });
-
-    Route::prefix('member-subscriptions')->group(function () {
-        Route::get('/', [App\Http\Controllers\Api\SuperAdmin\MemberSubscriptionController::class, 'index']);
-        Route::post('/', [App\Http\Controllers\Api\SuperAdmin\MemberSubscriptionController::class, 'store']);
-        Route::get('/pending', [App\Http\Controllers\Api\SuperAdmin\MemberSubscriptionApprovalController::class, 'pending']);
-        Route::post('/{subscription}/approve', [App\Http\Controllers\Api\SuperAdmin\MemberSubscriptionApprovalController::class, 'approve']);
-        Route::post('/{subscription}/reject', [App\Http\Controllers\Api\SuperAdmin\MemberSubscriptionApprovalController::class, 'reject']);
-        Route::get('/{subscription}', [App\Http\Controllers\Api\SuperAdmin\MemberSubscriptionController::class, 'show']);
-        Route::put('/{subscription}', [App\Http\Controllers\Api\SuperAdmin\MemberSubscriptionController::class, 'update']);
-        Route::post('/{subscription}/cancel', [App\Http\Controllers\Api\SuperAdmin\MemberSubscriptionController::class, 'cancel']);
-        Route::post('/{subscription}/extend', [App\Http\Controllers\Api\SuperAdmin\MemberSubscriptionController::class, 'extend']);
-        Route::delete('/{subscription}', [App\Http\Controllers\Api\SuperAdmin\MemberSubscriptionController::class, 'destroy']);
-    });
-
-    });
-
-    // Reports routes
-    Route::prefix('reports')->group(function () {
-        Route::get('/dashboard', [App\Http\Controllers\Api\Reports\FinancialReportController::class, 'dashboard']);
-        Route::get('/loans', [App\Http\Controllers\Api\Reports\FinancialReportController::class, 'loans']);
-        Route::get('/investments', [App\Http\Controllers\Api\Reports\FinancialReportController::class, 'investments']);
-        Route::get('/contributions', [App\Http\Controllers\Api\Reports\FinancialReportController::class, 'contributions']);
-        Route::get('/payments', [App\Http\Controllers\Api\Reports\FinancialReportController::class, 'payments']);
-        Route::get('/monthly-trends', [App\Http\Controllers\Api\Reports\FinancialReportController::class, 'monthlyTrends']);
-    });
 
     // Document routes - Public (for registration/onboarding)
     Route::prefix('documents')->group(function () {
@@ -640,54 +507,8 @@ Route::prefix('super-admin')->middleware(['super_admin_auth'])->group(function (
         Route::get('/check-slug/{slug}', [App\Http\Controllers\Api\Onboarding\BusinessOnboardingController::class, 'checkSlugAvailability']);
     });
 
-
-
     
     
-    
-
-
-// Super Admin Payment Gateways routes (moved outside admin group)
-Route::prefix('super-admin')->middleware(['super_admin_auth'])->group(function () {
-    Route::get('/payment-gateways', [App\Http\Controllers\Api\SuperAdmin\SuperAdminPaymentGatewayController::class, 'index']);
-    Route::put('/payment-gateways/{gateway}', [App\Http\Controllers\Api\SuperAdmin\SuperAdminPaymentGatewayController::class, 'update']);
-    Route::post('/payment-gateways/{gateway}/test', [App\Http\Controllers\Api\SuperAdmin\SuperAdminPaymentGatewayController::class, 'testConnection']);
-    Route::get('/payment-gateways/platform-stats', [App\Http\Controllers\Api\SuperAdmin\SuperAdminPaymentGatewayController::class, 'getPlatformStats']);
-    Route::post('/payment-gateways/subscription-payment', [App\Http\Controllers\Api\SuperAdmin\SuperAdminPaymentGatewayController::class, 'initializeSubscriptionPayment']);
-    Route::post('/payment-gateways/member-subscription-payment', [App\Http\Controllers\Api\SuperAdmin\SuperAdminPaymentGatewayController::class, 'initializeMemberSubscriptionPayment']);
-    Route::get('/payment-gateways/verify/{reference}', [App\Http\Controllers\Api\SuperAdmin\SuperAdminPaymentGatewayController::class, 'verifyPayment']);
-    Route::get('/payment-gateways/transactions', [App\Http\Controllers\Api\SuperAdmin\SuperAdminPaymentGatewayController::class, 'getTransactionHistory']);
-    Route::get('/payment-gateways/revenue-analytics', [App\Http\Controllers\Api\SuperAdmin\SuperAdminPaymentGatewayController::class, 'getRevenueAnalytics']);
-    Route::get('/payment-gateways/callback', [App\Http\Controllers\Api\SuperAdmin\SuperAdminPaymentGatewayController::class, 'handleCallback']);
-    Route::post('/payment-gateways/manual-payment', [App\Http\Controllers\Api\SuperAdmin\SuperAdminPaymentGatewayController::class, 'submitManualPayment']);
-    
-    // Payment Approval Routes
-    Route::prefix('payment-approvals')->group(function () {
-        Route::get('/', [App\Http\Controllers\Api\SuperAdmin\PaymentApprovalController::class, 'index']);
-        Route::get('/{transaction}', [App\Http\Controllers\Api\SuperAdmin\PaymentApprovalController::class, 'show']);
-        Route::post('/{transaction}/approve', [App\Http\Controllers\Api\SuperAdmin\PaymentApprovalController::class, 'approve']);
-        Route::post('/{transaction}/reject', [App\Http\Controllers\Api\SuperAdmin\PaymentApprovalController::class, 'reject']);
-        Route::get('/logs/payments', [App\Http\Controllers\Api\SuperAdmin\PaymentApprovalController::class, 'getPaymentLogs']);
-        Route::get('/reconciliation/data', [App\Http\Controllers\Api\SuperAdmin\PaymentApprovalController::class, 'getReconciliationData']);
-    });
-    
-    // Invoices routes
-    Route::prefix('invoices')->group(function () {
-        Route::get('/', [App\Http\Controllers\Api\SuperAdmin\InvoiceController::class, 'index']);
-        Route::get('/{invoice}', [App\Http\Controllers\Api\SuperAdmin\InvoiceController::class, 'show']);
-        Route::get('/{invoice}/download', [App\Http\Controllers\Api\SuperAdmin\InvoiceController::class, 'download']);
-        Route::post('/{invoice}/resend', [App\Http\Controllers\Api\SuperAdmin\InvoiceController::class, 'resend']);
-    });
-    
-    // Domain requests routes
-    Route::prefix('domain-requests')->group(function () {
-        Route::get('/', [App\Http\Controllers\Api\SuperAdmin\DomainRequestController::class, 'index']);
-        Route::get('/{domainRequest}', [App\Http\Controllers\Api\SuperAdmin\DomainRequestController::class, 'show']);
-        Route::post('/{domainRequest}/review', [App\Http\Controllers\Api\SuperAdmin\DomainRequestController::class, 'review']);
-        Route::post('/{domainRequest}/verify', [App\Http\Controllers\Api\SuperAdmin\DomainRequestController::class, 'verify']);
-        Route::post('/{domainRequest}/activate', [App\Http\Controllers\Api\SuperAdmin\DomainRequestController::class, 'activate']);
-    });
-});
 
 // Tenant-specific routes
 Route::middleware(['tenant'])->group(function () {
@@ -698,10 +519,8 @@ Route::middleware(['tenant'])->group(function () {
     });
     
   
-
     // Tenant analytics
     Route::get('tenant/analytics/summary', [App\Http\Controllers\Api\Tenant\AnalyticsController::class, 'summary']);
-
     // Public tenant landing page (no auth, tenant context required)
     Route::get('landing-page', [App\Http\Controllers\Api\Public\LandingPageController::class, 'show']);
 });
@@ -711,9 +530,8 @@ Route::prefix('platform')->group(function () {
     Route::get('stats', [App\Http\Controllers\Api\Public\PlatformController::class, 'stats']);
 });
 
-
 // Admin routes  
-Route::prefix('admin')->middleware(['tenant', 'tenant_auth', 'role:admin'])->group(function () {
+Route::prefix('admin')->middleware(['tenant', 'tenant_auth', 'role:admin', 'tenant_subscription'])->group(function () {
     // Dashboard routes (tenant admin dashboard)
     Route::prefix('dashboard')->group(function () {
         Route::get('/stats', [App\Http\Controllers\Api\Dashboard\DashboardController::class, 'stats']);
@@ -846,7 +664,26 @@ Route::prefix('admin')->middleware(['tenant', 'tenant_auth', 'role:admin'])->gro
         Route::post('/withdrawals/{withdrawalId}/reject', [App\Http\Controllers\Api\Admin\WalletController::class, 'rejectWithdrawal']);
     });
     
+    // Investment Withdrawal Request routes
+    Route::prefix('investment-withdrawal-requests')->group(function () {
+        Route::get('/', [App\Http\Controllers\Api\Admin\InvestmentWithdrawalRequestController::class, 'index']);
+        Route::get('/stats', [App\Http\Controllers\Api\Admin\InvestmentWithdrawalRequestController::class, 'stats']);
+        Route::get('/{id}', [App\Http\Controllers\Api\Admin\InvestmentWithdrawalRequestController::class, 'show']);
+        Route::post('/{id}/approve', [App\Http\Controllers\Api\Admin\InvestmentWithdrawalRequestController::class, 'approve']);
+        Route::post('/{id}/reject', [App\Http\Controllers\Api\Admin\InvestmentWithdrawalRequestController::class, 'reject']);
+        Route::post('/{id}/process', [App\Http\Controllers\Api\Admin\InvestmentWithdrawalRequestController::class, 'process']);
+    });
+    
     // Refund routes
+    Route::prefix('refunds')->group(function () {
+        Route::get('/', [App\Http\Controllers\Api\Admin\RefundController::class, 'index']);
+        Route::get('/stats', [App\Http\Controllers\Api\Admin\RefundController::class, 'stats']);
+        Route::get('/{id}', [App\Http\Controllers\Api\Admin\RefundController::class, 'show']);
+        Route::post('/{id}/approve', [App\Http\Controllers\Api\Admin\RefundController::class, 'approve']);
+        Route::post('/{id}/reject', [App\Http\Controllers\Api\Admin\RefundController::class, 'reject']);
+    });
+    
+    // Refund member routes (legacy - direct refund processing)
     Route::prefix('refund-member')->group(function () {
         Route::get('/{member}', [App\Http\Controllers\Api\Admin\RefundController::class, 'summary']);
         Route::post('/', [App\Http\Controllers\Api\Admin\RefundController::class, 'refundMember']);
@@ -1186,7 +1023,213 @@ Route::prefix('admin')->middleware(['tenant', 'tenant_auth', 'role:admin'])->gro
     });
 });
 
+// Admin Payment Evidence Upload
+Route::post('admin/payment-evidence/upload', [App\Http\Controllers\Api\Admin\AdminPaymentEvidenceController::class, 'uploadPaymentEvidence']);
+
 // Webhook routes (no auth required, signature verified)
 Route::prefix('webhooks')->group(function () {
     Route::post('/blockchain', [App\Http\Controllers\Api\Webhooks\BlockchainWebhookController::class, 'handle']);
 });
+
+
+
+//=================================================== Super Admin Routes ===================================================
+// Super Admin Payment Gateways routes (moved outside admin group)
+Route::prefix('super-admin')->middleware(['super_admin_auth'])->group(function () {
+
+        // Dashboard routes
+        Route::prefix('dashboard')->group(function () {
+            Route::get('/overview', [App\Http\Controllers\Api\SuperAdmin\DashboardController::class, 'overview']);
+            Route::get('/metrics', [App\Http\Controllers\Api\SuperAdmin\DashboardController::class, 'metrics']);
+            Route::get('/recent-businesses', [App\Http\Controllers\Api\SuperAdmin\DashboardController::class, 'recentBusinesses']);
+            Route::get('/revenue-analytics', [App\Http\Controllers\Api\SuperAdmin\DashboardController::class, 'revenueAnalytics']);
+            Route::get('/subscription-analytics', [App\Http\Controllers\Api\SuperAdmin\DashboardController::class, 'subscriptionAnalytics']);
+            Route::get('/system-health', [App\Http\Controllers\Api\SuperAdmin\DashboardController::class, 'systemHealth']);
+            Route::get('/alerts', [App\Http\Controllers\Api\SuperAdmin\DashboardController::class, 'alerts']);
+            Route::get('/platform-stats', [App\Http\Controllers\Api\SuperAdmin\DashboardController::class, 'platformStats']);
+            Route::get('/test-member-count', [App\Http\Controllers\Api\SuperAdmin\DashboardController::class, 'testMemberCount']);
+        });
+            
+        Route::prefix('subscriptions')->group(function () {
+            Route::get('/', [App\Http\Controllers\Api\SuperAdmin\BusinessSubscriptionController::class, 'index']);
+            Route::get('/{subscription}', [App\Http\Controllers\Api\SuperAdmin\BusinessSubscriptionController::class, 'show']);
+            Route::post('/{subscription}/cancel', [App\Http\Controllers\Api\SuperAdmin\BusinessSubscriptionController::class, 'cancel']);
+            Route::post('/{subscription}/reactivate', [App\Http\Controllers\Api\SuperAdmin\BusinessSubscriptionController::class, 'reactivate']);
+            Route::post('/{subscription}/extend', [App\Http\Controllers\Api\SuperAdmin\BusinessSubscriptionController::class, 'extend']);
+            Route::post('/{subscription}/approve-payment', [App\Http\Controllers\Api\SuperAdmin\BusinessSubscriptionController::class, 'approvePayment']);
+            Route::post('/{subscription}/reject-payment', [App\Http\Controllers\Api\SuperAdmin\BusinessSubscriptionController::class, 'rejectPayment']);
+        });
+
+        Route::prefix('member-subscriptions')->group(function () {
+            Route::get('/', [App\Http\Controllers\Api\SuperAdmin\MemberSubscriptionController::class, 'index']);
+            Route::post('/', [App\Http\Controllers\Api\SuperAdmin\MemberSubscriptionController::class, 'store']);
+            Route::get('/pending', [App\Http\Controllers\Api\SuperAdmin\MemberSubscriptionApprovalController::class, 'pending']);
+            Route::post('/{subscription}/approve', [App\Http\Controllers\Api\SuperAdmin\MemberSubscriptionApprovalController::class, 'approve']);
+            Route::post('/{subscription}/reject', [App\Http\Controllers\Api\SuperAdmin\MemberSubscriptionApprovalController::class, 'reject']);
+            Route::get('/{subscription}', [App\Http\Controllers\Api\SuperAdmin\MemberSubscriptionController::class, 'show']);
+            Route::put('/{subscription}', [App\Http\Controllers\Api\SuperAdmin\MemberSubscriptionController::class, 'update']);
+            Route::post('/{subscription}/cancel', [App\Http\Controllers\Api\SuperAdmin\MemberSubscriptionController::class, 'cancel']);
+            Route::post('/{subscription}/extend', [App\Http\Controllers\Api\SuperAdmin\MemberSubscriptionController::class, 'extend']);
+            Route::delete('/{subscription}', [App\Http\Controllers\Api\SuperAdmin\MemberSubscriptionController::class, 'destroy']);
+        });
+        Route::get('/payment-gateways', [App\Http\Controllers\Api\SuperAdmin\SuperAdminPaymentGatewayController::class, 'index']);
+        Route::put('/payment-gateways/{gateway}', [App\Http\Controllers\Api\SuperAdmin\SuperAdminPaymentGatewayController::class, 'update']);
+        Route::post('/payment-gateways/{gateway}/test', [App\Http\Controllers\Api\SuperAdmin\SuperAdminPaymentGatewayController::class, 'testConnection']);
+        Route::get('/payment-gateways/platform-stats', [App\Http\Controllers\Api\SuperAdmin\SuperAdminPaymentGatewayController::class, 'getPlatformStats']);
+        Route::post('/payment-gateways/subscription-payment', [App\Http\Controllers\Api\SuperAdmin\SuperAdminPaymentGatewayController::class, 'initializeSubscriptionPayment']);
+        Route::post('/payment-gateways/member-subscription-payment', [App\Http\Controllers\Api\SuperAdmin\SuperAdminPaymentGatewayController::class, 'initializeMemberSubscriptionPayment']);
+        Route::get('/payment-gateways/verify/{reference}', [App\Http\Controllers\Api\SuperAdmin\SuperAdminPaymentGatewayController::class, 'verifyPayment']);
+        Route::get('/payment-gateways/transactions', [App\Http\Controllers\Api\SuperAdmin\SuperAdminPaymentGatewayController::class, 'getTransactionHistory']);
+        Route::get('/payment-gateways/revenue-analytics', [App\Http\Controllers\Api\SuperAdmin\SuperAdminPaymentGatewayController::class, 'getRevenueAnalytics']);
+        Route::get('/payment-gateways/callback', [App\Http\Controllers\Api\SuperAdmin\SuperAdminPaymentGatewayController::class, 'handleCallback']);
+        Route::post('/payment-gateways/manual-payment', [App\Http\Controllers\Api\SuperAdmin\SuperAdminPaymentGatewayController::class, 'submitManualPayment']);
+        
+        // Payment Approval Routes
+        Route::prefix('payment-approvals')->group(function () {
+            Route::get('/', [App\Http\Controllers\Api\SuperAdmin\PaymentApprovalController::class, 'index']);
+            Route::get('/{transaction}', [App\Http\Controllers\Api\SuperAdmin\PaymentApprovalController::class, 'show']);
+            Route::post('/{transaction}/approve', [App\Http\Controllers\Api\SuperAdmin\PaymentApprovalController::class, 'approve']);
+            Route::post('/{transaction}/reject', [App\Http\Controllers\Api\SuperAdmin\PaymentApprovalController::class, 'reject']);
+            Route::get('/logs/payments', [App\Http\Controllers\Api\SuperAdmin\PaymentApprovalController::class, 'getPaymentLogs']);
+            Route::get('/reconciliation/data', [App\Http\Controllers\Api\SuperAdmin\PaymentApprovalController::class, 'getReconciliationData']);
+        });
+        
+        // Invoices routes
+        Route::prefix('invoices')->group(function () {
+            Route::get('/', [App\Http\Controllers\Api\SuperAdmin\InvoiceController::class, 'index']);
+            Route::get('/{invoice}', [App\Http\Controllers\Api\SuperAdmin\InvoiceController::class, 'show']);
+            Route::get('/{invoice}/download', [App\Http\Controllers\Api\SuperAdmin\InvoiceController::class, 'download']);
+            Route::post('/{invoice}/resend', [App\Http\Controllers\Api\SuperAdmin\InvoiceController::class, 'resend']);
+        });
+        
+        // Domain requests routes
+        Route::prefix('domain-requests')->group(function () {
+            Route::get('/', [App\Http\Controllers\Api\SuperAdmin\DomainRequestController::class, 'index']);
+            Route::get('/{domainRequest}', [App\Http\Controllers\Api\SuperAdmin\DomainRequestController::class, 'show']);
+            Route::post('/{domainRequest}/review', [App\Http\Controllers\Api\SuperAdmin\DomainRequestController::class, 'review']);
+            Route::post('/{domainRequest}/verify', [App\Http\Controllers\Api\SuperAdmin\DomainRequestController::class, 'verify']);
+            Route::post('/{domainRequest}/activate', [App\Http\Controllers\Api\SuperAdmin\DomainRequestController::class, 'activate']);
+        });
+
+        // Profile routes
+        Route::prefix('profile')->group(function () {
+            Route::get('/', [App\Http\Controllers\Api\SuperAdmin\SuperAdminProfileController::class, 'show']);
+            Route::put('/', [App\Http\Controllers\Api\SuperAdmin\SuperAdminProfileController::class, 'update']);
+            Route::post('/change-password', [App\Http\Controllers\Api\SuperAdmin\SuperAdminProfileController::class, 'changePassword']);
+        });
+
+        // Notification routes
+        Route::prefix('notifications')->group(function () {
+            Route::get('/', [App\Http\Controllers\Api\SuperAdmin\SuperAdminNotificationController::class, 'index']);
+            Route::get('/{notification}', [App\Http\Controllers\Api\SuperAdmin\SuperAdminNotificationController::class, 'show']);
+            Route::post('/{notification}/read', [App\Http\Controllers\Api\SuperAdmin\SuperAdminNotificationController::class, 'markAsRead']);
+            Route::post('/mark-all-read', [App\Http\Controllers\Api\SuperAdmin\SuperAdminNotificationController::class, 'markAllAsRead']);
+            Route::get('/unread-count', [App\Http\Controllers\Api\SuperAdmin\SuperAdminNotificationController::class, 'unreadCount']);
+            Route::delete('/{notification}', [App\Http\Controllers\Api\SuperAdmin\SuperAdminNotificationController::class, 'destroy']);
+        });
+
+        Route::prefix('businesses')->group(function () {
+        Route::get('/', [App\Http\Controllers\Api\SuperAdmin\BusinessController::class, 'index']);
+        Route::post('/', [App\Http\Controllers\Api\SuperAdmin\BusinessController::class, 'store']);
+        Route::get('/{business}', [App\Http\Controllers\Api\SuperAdmin\BusinessController::class, 'show']);
+        Route::put('/{business}', [App\Http\Controllers\Api\SuperAdmin\BusinessController::class, 'update']);
+        Route::post('/{business}/suspend', [App\Http\Controllers\Api\SuperAdmin\BusinessController::class, 'suspend']);
+        Route::post('/{business}/activate', [App\Http\Controllers\Api\SuperAdmin\BusinessController::class, 'activate']);
+        Route::delete('/{business}', [App\Http\Controllers\Api\SuperAdmin\BusinessController::class, 'destroy']);
+        });
+        // Business domains management
+        Route::prefix('{business}/domains')->group(function () {
+            Route::get('/', [App\Http\Controllers\Api\SuperAdmin\BusinessController::class, 'domains']);
+            Route::post('/', [App\Http\Controllers\Api\SuperAdmin\BusinessController::class, 'addDomain']);
+            Route::post('/{domain}/verify', [App\Http\Controllers\Api\SuperAdmin\BusinessController::class, 'verifyDomain']);
+            Route::delete('/{domain}', [App\Http\Controllers\Api\SuperAdmin\BusinessController::class, 'deleteDomain']);
+        });
+
+        // Tenant provisioning
+        Route::post('/tenants', [App\Http\Controllers\Api\SuperAdmin\TenantProvisioningController::class, 'store']);
+
+        Route::prefix('packages')->group(function () {
+        Route::get('/', [App\Http\Controllers\Api\SuperAdmin\PackageController::class, 'index']);
+        Route::post('/', [App\Http\Controllers\Api\SuperAdmin\PackageController::class, 'store']);
+        Route::get('/{package}', [App\Http\Controllers\Api\SuperAdmin\PackageController::class, 'show']);
+        Route::put('/{package}', [App\Http\Controllers\Api\SuperAdmin\PackageController::class, 'update']);
+        Route::post('/{package}/toggle', [App\Http\Controllers\Api\SuperAdmin\PackageController::class, 'toggle']);
+        Route::delete('/{package}', [App\Http\Controllers\Api\SuperAdmin\PackageController::class, 'destroy']);
+        });
+
+        Route::prefix('modules')->group(function () {
+            Route::get('/', [App\Http\Controllers\Api\SuperAdmin\ModuleController::class, 'index']);
+            Route::post('/', [App\Http\Controllers\Api\SuperAdmin\ModuleController::class, 'store']);
+            Route::get('/{module}', [App\Http\Controllers\Api\SuperAdmin\ModuleController::class, 'show']);
+            Route::put('/{module}', [App\Http\Controllers\Api\SuperAdmin\ModuleController::class, 'update']);
+            Route::post('/{module}/toggle', [App\Http\Controllers\Api\SuperAdmin\ModuleController::class, 'toggle']);
+            Route::delete('/{module}', [App\Http\Controllers\Api\SuperAdmin\ModuleController::class, 'destroy']);
+        });
+
+        Route::prefix('white-label-packages')->group(function () {
+            Route::get('/', [App\Http\Controllers\Api\SuperAdmin\WhiteLabelPackageController::class, 'index']);
+            Route::post('/', [App\Http\Controllers\Api\SuperAdmin\WhiteLabelPackageController::class, 'store']);
+            Route::get('/{whiteLabelPackage}', [App\Http\Controllers\Api\SuperAdmin\WhiteLabelPackageController::class, 'show']);
+            Route::put('/{whiteLabelPackage}', [App\Http\Controllers\Api\SuperAdmin\WhiteLabelPackageController::class, 'update']);
+            Route::post('/{whiteLabelPackage}/toggle', [App\Http\Controllers\Api\SuperAdmin\WhiteLabelPackageController::class, 'toggle']);
+            Route::delete('/{whiteLabelPackage}', [App\Http\Controllers\Api\SuperAdmin\WhiteLabelPackageController::class, 'destroy']);
+        });
+
+        Route::prefix('analytics')->group(function () {
+            Route::get('/dashboard', [App\Http\Controllers\Api\SuperAdmin\AnalyticsController::class, 'dashboard']);
+            Route::get('/revenue', [App\Http\Controllers\Api\SuperAdmin\AnalyticsController::class, 'revenue']);
+            Route::get('/businesses', [App\Http\Controllers\Api\SuperAdmin\AnalyticsController::class, 'businesses']);
+            Route::get('/activity', [App\Http\Controllers\Api\SuperAdmin\AnalyticsController::class, 'activity']);
+            Route::get('/test', [App\Http\Controllers\Api\SuperAdmin\AnalyticsController::class, 'test']);
+        });
+
+        Route::prefix('mail')->group(function () {
+            Route::get('/', [App\Http\Controllers\Api\SuperAdmin\SuperAdminMailController::class, 'index']);
+            Route::post('/send', [App\Http\Controllers\Api\SuperAdmin\SuperAdminMailController::class, 'sendMail']);
+            Route::post('/save-template', [App\Http\Controllers\Api\SuperAdmin\SuperAdminMailController::class, 'saveTemplate']);
+            Route::get('/templates', [App\Http\Controllers\Api\SuperAdmin\SuperAdminMailController::class, 'getTemplates']);
+            Route::get('/history', [App\Http\Controllers\Api\SuperAdmin\SuperAdminMailController::class, 'getHistory']);
+        });
+
+        Route::prefix('admins')->group(function () {
+            Route::get('/', [App\Http\Controllers\Api\SuperAdmin\SuperAdminManagementController::class, 'index']);
+            Route::post('/', [App\Http\Controllers\Api\SuperAdmin\SuperAdminManagementController::class, 'store']);
+            Route::get('/{admin}', [App\Http\Controllers\Api\SuperAdmin\SuperAdminManagementController::class, 'show']);
+            Route::put('/{admin}', [App\Http\Controllers\Api\SuperAdmin\SuperAdminManagementController::class, 'update']);
+            Route::delete('/{admin}', [App\Http\Controllers\Api\SuperAdmin\SuperAdminManagementController::class, 'destroy']);
+            Route::post('/{admin}/toggle-status', [App\Http\Controllers\Api\SuperAdmin\SuperAdminManagementController::class, 'toggleStatus']);
+        });
+
+        Route::prefix('roles')->group(function () {
+            Route::get('/', [App\Http\Controllers\Api\SuperAdmin\SuperAdminRoleController::class, 'index']);
+            Route::post('/', [App\Http\Controllers\Api\SuperAdmin\SuperAdminRoleController::class, 'store']);
+            Route::get('/{role}', [App\Http\Controllers\Api\SuperAdmin\SuperAdminRoleController::class, 'show']);
+            Route::put('/{role}', [App\Http\Controllers\Api\SuperAdmin\SuperAdminRoleController::class, 'update']);
+            Route::delete('/{role}', [App\Http\Controllers\Api\SuperAdmin\SuperAdminRoleController::class, 'destroy']);
+            Route::get('/{role}/permissions', [App\Http\Controllers\Api\SuperAdmin\SuperAdminRoleController::class, 'getRolePermissions']);
+        });
+
+        Route::prefix('permissions')->group(function () {
+            Route::get('/', [App\Http\Controllers\Api\SuperAdmin\SuperAdminPermissionController::class, 'index']);
+            Route::post('/', [App\Http\Controllers\Api\SuperAdmin\SuperAdminPermissionController::class, 'store']);
+            Route::get('/grouped', [App\Http\Controllers\Api\SuperAdmin\SuperAdminPermissionController::class, 'getGroupedPermissions']);
+            Route::get('/{permission}', [App\Http\Controllers\Api\SuperAdmin\SuperAdminPermissionController::class, 'show']);
+            Route::put('/{permission}', [App\Http\Controllers\Api\SuperAdmin\SuperAdminPermissionController::class, 'update']);
+            Route::delete('/{permission}', [App\Http\Controllers\Api\SuperAdmin\SuperAdminPermissionController::class, 'destroy']);
+        });
+
+            Route::prefix('settings')->group(function () {
+                Route::get('/', [App\Http\Controllers\Api\SuperAdmin\PlatformSettingsController::class, 'index']);
+                Route::post('/', [App\Http\Controllers\Api\SuperAdmin\PlatformSettingsController::class, 'store']);
+                Route::post('/bulk-update', [App\Http\Controllers\Api\SuperAdmin\PlatformSettingsController::class, 'bulkUpdate']);
+                Route::post('/test-email', [App\Http\Controllers\Api\SuperAdmin\PlatformSettingsController::class, 'testEmailSettings']);
+                Route::get('/category/{category}', [App\Http\Controllers\Api\SuperAdmin\PlatformSettingsController::class, 'getByCategory']);
+                Route::get('/{setting}', [App\Http\Controllers\Api\SuperAdmin\PlatformSettingsController::class, 'show']);
+                Route::put('/{setting}', [App\Http\Controllers\Api\SuperAdmin\PlatformSettingsController::class, 'update']);
+                Route::delete('/{setting}', [App\Http\Controllers\Api\SuperAdmin\PlatformSettingsController::class, 'destroy']);
+            });
+
+ });
+
+
+//=================================================== Super Admin Routes ===================================================

@@ -6,14 +6,21 @@ use App\Http\Controllers\Controller;
 use App\Http\Requests\Investments\InvestmentWithdrawalRequest;
 use App\Models\Tenant\Investment;
 use App\Models\Tenant\InvestmentReturn;
+use App\Models\Tenant\InvestmentWithdrawalRequest as WithdrawalRequest;
 use App\Models\Tenant\Wallet;
 use App\Models\Tenant\WalletTransaction;
+use App\Services\Communication\NotificationService;
 use Illuminate\Http\JsonResponse;
 use Illuminate\Support\Facades\Auth;
 use Illuminate\Support\Facades\DB;
+use Illuminate\Support\Facades\Validator;
 
 class InvestmentWithdrawalController extends Controller
 {
+    public function __construct(
+        protected NotificationService $notificationService
+    ) {}
+
     public function withdraw(InvestmentWithdrawalRequest $request, Investment $investment): JsonResponse
     {
         try {
@@ -24,21 +31,25 @@ class InvestmentWithdrawalController extends Controller
 
             if (!$member || $investment->member_id !== $member->id) {
                 return response()->json([
+                    'success' => false,
                     'message' => 'Unauthorized'
                 ], 403);
             }
 
             if ($investment->status !== 'active') {
                 return response()->json([
+                    'success' => false,
                     'message' => 'Investment is not active'
                 ], 400);
             }
 
-            // Check if investment has matured
-            if (!$this->isInvestmentMatured($investment)) {
+            // Check if investment has matured (calculate maturity date from investment_date + duration_months)
+            $maturityDate = $investment->investment_date->copy()->addMonths($investment->duration_months);
+            if (now()->lt($maturityDate)) {
                 return response()->json([
+                    'success' => false,
                     'message' => 'Investment has not matured yet',
-                    'maturity_date' => $investment->maturity_date,
+                    'maturity_date' => $maturityDate->toDateString(),
                 ], 400);
             }
 
@@ -47,39 +58,71 @@ class InvestmentWithdrawalController extends Controller
 
             if ($withdrawalAmount <= 0) {
                 return response()->json([
+                    'success' => false,
                     'message' => 'No funds available for withdrawal'
                 ], 400);
             }
 
             // Check if partial withdrawal is allowed
-            if ($request->withdrawal_type === 'partial' && $request->amount > $withdrawalAmount) {
+            $actualAmount = $request->withdrawal_type === 'partial' ? $request->amount : $withdrawalAmount;
+            
+            if ($request->withdrawal_type === 'partial' && $actualAmount > $withdrawalAmount) {
                 return response()->json([
+                    'success' => false,
                     'message' => 'Withdrawal amount exceeds available balance'
                 ], 400);
             }
 
-            $actualAmount = $request->withdrawal_type === 'partial' ? $request->amount : $withdrawalAmount;
+            // Check for existing pending withdrawal request
+            $existingRequest = WithdrawalRequest::where('investment_id', $investment->id)
+                ->where('status', 'pending')
+                ->first();
 
-            // Process withdrawal
-            $withdrawalResult = $this->processWithdrawal($investment, $actualAmount, $request->withdrawal_type);
-
-            if (!$withdrawalResult['success']) {
+            if ($existingRequest) {
                 return response()->json([
                     'success' => false,
-                    'message' => $withdrawalResult['message'],
+                    'message' => 'You already have a pending withdrawal request for this investment'
                 ], 400);
             }
 
+            // Create withdrawal request instead of processing immediately
+            $withdrawalRequest = WithdrawalRequest::create([
+                'investment_id' => $investment->id,
+                'member_id' => $member->id,
+                'withdrawal_type' => $request->withdrawal_type,
+                'amount' => $actualAmount,
+                'status' => 'pending',
+                'reason' => $request->reason ?? null,
+                'requested_by' => $user->id,
+                'requested_at' => now(),
+            ]);
+
             DB::commit();
+
+            // Notify admins about new withdrawal request
+            $memberName = trim($member->first_name . ' ' . $member->last_name);
+            $this->notificationService->notifyAdmins(
+                'info',
+                'New Investment Withdrawal Request',
+                "A new withdrawal request of " . number_format($actualAmount, 2) . " has been submitted by {$memberName} for Investment #{$investment->id}.",
+                [
+                    'withdrawal_request_id' => $withdrawalRequest->id,
+                    'investment_id' => $investment->id,
+                    'member_id' => $member->id,
+                    'amount' => $actualAmount,
+                    'withdrawal_type' => $request->withdrawal_type,
+                ]
+            );
 
             return response()->json([
                 'success' => true,
-                'message' => 'Investment withdrawal processed successfully',
-                'withdrawal' => [
+                'message' => 'Withdrawal request submitted successfully. It will be reviewed by an administrator.',
+                'withdrawal_request' => [
+                    'id' => $withdrawalRequest->id,
                     'investment_id' => $investment->id,
                     'amount' => $actualAmount,
                     'type' => $request->withdrawal_type,
-                    'wallet_balance' => $withdrawalResult['wallet_balance'],
+                    'status' => 'pending',
                 ],
             ]);
 
@@ -88,7 +131,7 @@ class InvestmentWithdrawalController extends Controller
             
             return response()->json([
                 'success' => false,
-                'message' => 'Investment withdrawal failed',
+                'message' => 'Investment withdrawal request failed',
                 'error' => $e->getMessage(),
             ], 500);
         }
@@ -101,22 +144,25 @@ class InvestmentWithdrawalController extends Controller
 
         if (!$member || $investment->member_id !== $member->id) {
             return response()->json([
+                'success' => false,
                 'message' => 'Unauthorized'
             ], 403);
         }
 
-        $returns = $investment->returns()
-            ->where('type', 'withdrawal')
-            ->orderBy('return_date', 'desc')
+        // Get withdrawal requests for this investment
+        $withdrawals = WithdrawalRequest::where('investment_id', $investment->id)
+            ->with(['approvedBy', 'rejectedBy', 'processedBy'])
+            ->orderBy('requested_at', 'desc')
             ->paginate(15);
 
         return response()->json([
-            'withdrawals' => $returns,
+            'success' => true,
+            'withdrawals' => $withdrawals->items(),
             'pagination' => [
-                'current_page' => $returns->currentPage(),
-                'last_page' => $returns->lastPage(),
-                'per_page' => $returns->perPage(),
-                'total' => $returns->total(),
+                'current_page' => $withdrawals->currentPage(),
+                'last_page' => $withdrawals->lastPage(),
+                'per_page' => $withdrawals->perPage(),
+                'total' => $withdrawals->total(),
             ]
         ]);
     }
@@ -128,23 +174,29 @@ class InvestmentWithdrawalController extends Controller
 
         if (!$member || $investment->member_id !== $member->id) {
             return response()->json([
+                'success' => false,
                 'message' => 'Unauthorized'
             ], 403);
         }
 
+        $maturityDate = $investment->investment_date->copy()->addMonths($investment->duration_months);
         $isMatured = $this->isInvestmentMatured($investment);
         $withdrawalAmount = $this->calculateWithdrawalAmount($investment, 'full');
-        $totalReturns = $investment->returns()->where('type', 'withdrawal')->sum('amount');
+        
+        // Get total withdrawn from completed withdrawal requests
+        $totalWithdrawn = WithdrawalRequest::where('investment_id', $investment->id)
+            ->whereIn('status', ['completed', 'processing'])
+            ->sum('amount');
 
         $options = [
             'is_matured' => $isMatured,
-            'maturity_date' => $investment->maturity_date,
+            'maturity_date' => $maturityDate->toDateString(),
             'total_invested' => $investment->amount,
-            'total_returns' => $totalReturns,
+            'total_withdrawn' => $totalWithdrawn,
             'available_for_withdrawal' => $withdrawalAmount,
             'withdrawal_types' => [
                 'full' => [
-                    'available' => $isMatured,
+                    'available' => $isMatured && $withdrawalAmount > 0,
                     'amount' => $withdrawalAmount,
                     'description' => 'Withdraw all available funds',
                 ],
@@ -162,7 +214,7 @@ class InvestmentWithdrawalController extends Controller
                 'id' => $investment->id,
                 'amount' => $investment->amount,
                 'status' => $investment->status,
-                'maturity_date' => $investment->maturity_date,
+                'maturity_date' => $maturityDate->toDateString(),
             ],
             'withdrawal_options' => $options,
         ]);
@@ -170,96 +222,38 @@ class InvestmentWithdrawalController extends Controller
 
     private function isInvestmentMatured(Investment $investment): bool
     {
-        return now()->gte($investment->maturity_date);
+        $maturityDate = $investment->investment_date->copy()->addMonths($investment->duration_months);
+        return now()->gte($maturityDate);
     }
 
     private function calculateWithdrawalAmount(Investment $investment, string $type): float
     {
         $totalInvested = $investment->amount;
-        $totalWithdrawn = $investment->returns()
-            ->where('type', 'withdrawal')
+        
+        // Get total withdrawn from withdrawal requests that are completed
+        $totalWithdrawn = WithdrawalRequest::where('investment_id', $investment->id)
+            ->whereIn('status', ['completed', 'processing'])
             ->sum('amount');
 
         $availableAmount = $totalInvested - $totalWithdrawn;
 
         if ($type === 'partial') {
-            return $availableAmount;
+            return max(0, $availableAmount);
         }
 
         // For full withdrawal, include any accrued returns
         $accruedReturns = $this->calculateAccruedReturns($investment);
-        return $availableAmount + $accruedReturns;
+        return max(0, $availableAmount + $accruedReturns);
     }
 
     private function calculateAccruedReturns(Investment $investment): float
     {
-        // This would typically calculate returns based on the investment plan
-        // For now, we'll use a simple calculation
-        $monthsInvested = $investment->created_at->diffInMonths(now());
-        $monthlyReturn = $investment->amount * ($investment->return_rate / 100) / 12;
+        // Calculate returns based on investment duration and expected return rate
+        $monthsInvested = $investment->investment_date->diffInMonths(now());
+        $annualReturn = $investment->amount * ($investment->expected_return_rate / 100);
+        $monthlyReturn = $annualReturn / 12;
         
-        return $monthlyReturn * $monthsInvested;
+        return max(0, $monthlyReturn * $monthsInvested);
     }
 
-    private function processWithdrawal(Investment $investment, float $amount, string $type): array
-    {
-        try {
-            // Get member's wallet
-            $member = $investment->member;
-            $wallet = $member->wallet;
-
-            if (!$wallet) {
-                return [
-                    'success' => false,
-                    'message' => 'Wallet not found',
-                ];
-            }
-
-            // Credit wallet
-            $wallet->increment('balance', $amount);
-
-            // Create wallet transaction
-            WalletTransaction::create([
-                'wallet_id' => $wallet->id,
-                'type' => 'investment_withdrawal',
-                'amount' => $amount,
-                'balance_after' => $wallet->fresh()->balance,
-                'reference' => 'WITHDRAW-' . time() . '-' . rand(1000, 9999),
-                'description' => "Investment withdrawal from investment #{$investment->id}",
-                'metadata' => [
-                    'investment_id' => $investment->id,
-                    'withdrawal_type' => $type,
-                ],
-            ]);
-
-            // Create investment return record
-            InvestmentReturn::create([
-                'investment_id' => $investment->id,
-                'amount' => $amount,
-                'return_date' => now(),
-                'status' => 'completed',
-                'type' => 'withdrawal',
-                'metadata' => [
-                    'withdrawal_type' => $type,
-                ],
-            ]);
-
-            // Update investment status if fully withdrawn
-            if ($type === 'full') {
-                $investment->update(['status' => 'withdrawn']);
-            }
-
-            return [
-                'success' => true,
-                'message' => 'Withdrawal processed successfully',
-                'wallet_balance' => $wallet->fresh()->balance,
-            ];
-
-        } catch (\Exception $e) {
-            return [
-                'success' => false,
-                'message' => 'Withdrawal processing failed: ' . $e->getMessage(),
-            ];
-        }
-    }
 }

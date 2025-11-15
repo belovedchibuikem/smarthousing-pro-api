@@ -7,6 +7,7 @@ use App\Models\Tenant\Property;
 use App\Models\Tenant\PropertyAllocation;
 use App\Models\Tenant\PropertyMaintenanceRecord;
 use App\Models\Tenant\Member;
+use App\Services\Communication\NotificationService;
 use Illuminate\Http\JsonResponse;
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\DB;
@@ -15,6 +16,10 @@ use Illuminate\Support\Facades\Validator;
 
 class MemberPropertyManagementController extends Controller
 {
+    public function __construct(
+        protected NotificationService $notificationService
+    ) {}
+
     /**
      * Get member's estates (properties grouped by location)
      */
@@ -329,6 +334,29 @@ class MemberPropertyManagementController extends Controller
             }
 
             DB::commit();
+
+            $record->load(['property', 'reporter.user']);
+
+            // Notify admins about new maintenance request
+            if ($record->reporter && $record->reporter->user) {
+                $memberName = trim($record->reporter->first_name . ' ' . $record->reporter->last_name);
+                $propertyTitle = $record->property->title ?? 'property';
+                
+                $this->notificationService->notifyAdmins(
+                    'info',
+                    'New Maintenance Request',
+                    "A new {$record->priority} priority maintenance request for {$propertyTitle} has been submitted by {$memberName}",
+                    [
+                        'maintenance_id' => $record->id,
+                        'property_id' => $record->property_id,
+                        'property_title' => $propertyTitle,
+                        'member_id' => $record->reported_by,
+                        'member_name' => $memberName,
+                        'issue_type' => $record->issue_type,
+                        'priority' => $record->priority,
+                    ]
+                );
+            }
 
             return response()->json([
                 'success' => true,

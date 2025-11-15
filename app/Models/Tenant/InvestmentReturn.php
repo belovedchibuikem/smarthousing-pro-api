@@ -17,8 +17,8 @@ class InvestmentReturn extends Model
         'investment_id',
         'amount',
         'return_date',
-        'type',
-        'description',
+        'status',
+        'metadata',
     ];
 
     protected $casts = [

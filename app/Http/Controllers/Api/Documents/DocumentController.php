@@ -168,6 +168,8 @@ class DocumentController extends Controller
             'approved_by' => $user->id,
         ]);
 
+        $document->load('member.user');
+
         // Log audit event
         $this->auditLogService->logApproval(
             $document,
@@ -190,6 +192,20 @@ class DocumentController extends Controller
                 'document_id' => $document->id,
             ]
         );
+
+        // Notify the member about document approval
+        if ($document->member && $document->member->user) {
+            $this->notificationService->sendNotificationToUsers(
+                [$document->member->user->id],
+                'success',
+                'Document Approved',
+                'Your ' . ($document->type ?? 'document') . ' has been approved.',
+                [
+                    'document_id' => $document->id,
+                    'document_type' => $document->type,
+                ]
+            );
+        }
 
         return response()->json([
             'success' => true,
@@ -221,6 +237,8 @@ class DocumentController extends Controller
             'rejected_by' => $user->id,
         ]);
 
+        $document->load('member.user');
+
         // Log audit event
         $this->auditLogService->logRejection(
             $document,
@@ -245,6 +263,21 @@ class DocumentController extends Controller
                 'reason' => $request->reason,
             ]
         );
+
+        // Notify the member about document rejection
+        if ($document->member && $document->member->user) {
+            $this->notificationService->sendNotificationToUsers(
+                [$document->member->user->id],
+                'warning',
+                'Document Rejected',
+                'Your ' . ($document->type ?? 'document') . ' has been rejected. Reason: ' . $request->reason,
+                [
+                    'document_id' => $document->id,
+                    'document_type' => $document->type,
+                    'reason' => $request->reason,
+                ]
+            );
+        }
 
         return response()->json([
             'success' => true,

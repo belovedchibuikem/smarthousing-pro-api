@@ -5,7 +5,7 @@ namespace App\Http\Middleware;
 use Closure;
 use Illuminate\Http\Request;
 use Symfony\Component\HttpFoundation\Response;
-use Laravel\Sanctum\PersonalAccessToken;
+use App\Models\Central\PersonalAccessToken;
 use Illuminate\Support\Facades\Log;
 
 class SuperAdminAuth

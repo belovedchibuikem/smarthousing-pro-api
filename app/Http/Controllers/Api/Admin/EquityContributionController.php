@@ -5,6 +5,7 @@ namespace App\Http\Controllers\Api\Admin;
 use App\Http\Controllers\Controller;
 use App\Models\Tenant\EquityContribution;
 use App\Models\Tenant\EquityWalletBalance;
+use App\Services\Communication\NotificationService;
 use Illuminate\Http\JsonResponse;
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\DB;
@@ -12,6 +13,9 @@ use Illuminate\Support\Facades\Log;
 
 class EquityContributionController extends Controller
 {
+    public function __construct(
+        protected NotificationService $notificationService
+    ) {}
     public function index(Request $request): JsonResponse
     {
         $query = EquityContribution::with(['member.user', 'plan']);
@@ -91,10 +95,27 @@ class EquityContributionController extends Controller
 
             DB::commit();
 
+            $contribution->load(['member.user', 'plan']);
+
+            // Notify the member about equity contribution approval
+            if ($contribution->member && $contribution->member->user) {
+                $this->notificationService->sendNotificationToUsers(
+                    [$contribution->member->user->id],
+                    'success',
+                    'Equity Contribution Approved',
+                    'Your equity contribution of ₦' . number_format($contribution->amount, 2) . ' has been approved and added to your equity wallet.',
+                    [
+                        'contribution_id' => $contribution->id,
+                        'amount' => $contribution->amount,
+                        'payment_reference' => $contribution->payment_reference,
+                    ]
+                );
+            }
+
             return response()->json([
                 'success' => true,
                 'message' => 'Equity contribution approved successfully',
-                'data' => $contribution->fresh()->load(['member.user', 'plan'])
+                'data' => $contribution
             ]);
         } catch (\Exception $e) {
             DB::rollBack();
@@ -139,10 +160,28 @@ class EquityContributionController extends Controller
             'rejected_at' => now(),
         ]);
 
+        $contribution->load(['member.user', 'plan']);
+
+        // Notify the member about equity contribution rejection
+        if ($contribution->member && $contribution->member->user) {
+            $this->notificationService->sendNotificationToUsers(
+                [$contribution->member->user->id],
+                'warning',
+                'Equity Contribution Rejected',
+                'Your equity contribution of ₦' . number_format($contribution->amount, 2) . ' has been rejected. Reason: ' . $validated['rejection_reason'],
+                [
+                    'contribution_id' => $contribution->id,
+                    'amount' => $contribution->amount,
+                    'payment_reference' => $contribution->payment_reference,
+                    'reason' => $validated['rejection_reason'],
+                ]
+            );
+        }
+
         return response()->json([
             'success' => true,
             'message' => 'Equity contribution rejected successfully',
-            'data' => $contribution->fresh()->load(['member.user', 'plan'])
+            'data' => $contribution
         ]);
     }
 

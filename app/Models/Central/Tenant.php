@@ -47,5 +47,34 @@ class Tenant extends BaseTenant implements TenantWithDatabase
         return $this->hasMany(PlatformTransaction::class);
     }
 
-    // Basic tenant functionality - additional methods can be added as needed
+    /**
+     * Check if tenant has active subscription
+     */
+    public function hasActiveSubscription(): bool
+    {
+        return $this->subscription()
+            ->where('status', 'active')
+            ->where('ends_at', '>', now())
+            ->exists();
+    }
+
+    /**
+     * Get active subscription
+     */
+    public function getActiveSubscription()
+    {
+        return $this->subscription()
+            ->where('status', 'active')
+            ->where('ends_at', '>', now())
+            ->first();
+    }
+
+    /**
+     * Check if tenant is on trial
+     */
+    public function isOnTrial(): bool
+    {
+        $subscription = $this->subscription;
+        return $subscription && $subscription->trial_ends_at && $subscription->trial_ends_at->isFuture();
+    }
 }

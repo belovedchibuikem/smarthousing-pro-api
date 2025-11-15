@@ -15,6 +15,8 @@ class ResendOtpRequest extends FormRequest
     {
         return [
             'email' => 'required|email',
+            'type' => 'nullable|in:registration,password_reset,email_verification',
+            'phone' => 'nullable|string|max:20',
         ];
     }
 }

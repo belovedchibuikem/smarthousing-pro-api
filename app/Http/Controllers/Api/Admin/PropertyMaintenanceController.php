@@ -5,6 +5,7 @@ namespace App\Http\Controllers\Api\Admin;
 use App\Http\Controllers\Controller;
 use App\Models\Tenant\PropertyMaintenanceRecord;
 use App\Models\Tenant\Property;
+use App\Services\Communication\NotificationService;
 use Illuminate\Http\JsonResponse;
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\Validator;
@@ -12,6 +13,9 @@ use Illuminate\Support\Facades\DB;
 
 class PropertyMaintenanceController extends Controller
 {
+    public function __construct(
+        protected NotificationService $notificationService
+    ) {}
     public function index(Request $request): JsonResponse
     {
         $user = $request->user();
@@ -218,6 +222,7 @@ class PropertyMaintenanceController extends Controller
                 $request->merge(['completed_date' => now()]);
             }
 
+            $oldStatus = $record->status;
             $record->update($request->only([
                 'property_id', 'reported_by', 'issue_type', 'priority',
                 'description', 'status', 'assigned_to', 'estimated_cost',
@@ -226,6 +231,32 @@ class PropertyMaintenanceController extends Controller
             ]));
 
             $record->load(['property', 'reporter.user', 'assignee']);
+
+            // Notify member about status changes
+            if ($request->has('status') && $oldStatus !== $record->status && $record->reporter && $record->reporter->user) {
+                $propertyTitle = $record->property->title ?? 'property';
+                $statusMessages = [
+                    'in_progress' => "Your maintenance request for {$propertyTitle} is now in progress.",
+                    'completed' => "Your maintenance request for {$propertyTitle} has been completed.",
+                    'cancelled' => "Your maintenance request for {$propertyTitle} has been cancelled.",
+                ];
+
+                if (isset($statusMessages[$record->status])) {
+                    $this->notificationService->sendNotificationToUsers(
+                        [$record->reporter->user->id],
+                        $record->status === 'completed' ? 'success' : ($record->status === 'cancelled' ? 'warning' : 'info'),
+                        'Maintenance Request ' . ucfirst(str_replace('_', ' ', $record->status)),
+                        $statusMessages[$record->status],
+                        [
+                            'maintenance_id' => $record->id,
+                            'property_id' => $record->property_id,
+                            'property_title' => $propertyTitle,
+                            'status' => $record->status,
+                            'issue_type' => $record->issue_type,
+                        ]
+                    );
+                }
+            }
 
             return response()->json([
                 'success' => true,

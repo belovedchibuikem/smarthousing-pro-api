@@ -202,6 +202,48 @@ class ContributionController extends Controller
             'rejected_by' => Auth::id(),
         ]);
 
+        $contribution->load('member.user');
+        
+        // Log audit event
+        $this->auditLogService->logRejection(
+            $contribution,
+            'Contribution',
+            $request->reason,
+            Auth::user(),
+            [
+                'amount' => $contribution->amount,
+                'member_id' => $contribution->member_id,
+            ]
+        );
+        
+        // Log activity event
+        $this->activityLogService->logModelAction(
+            'reject',
+            $contribution,
+            Auth::user(),
+            [
+                'amount' => $contribution->amount,
+                'member_id' => $contribution->member_id,
+                'contribution_id' => $contribution->id,
+                'reason' => $request->reason,
+            ]
+        );
+        
+        // Notify the member about contribution rejection
+        if ($contribution->member && $contribution->member->user) {
+            $this->notificationService->sendNotificationToUsers(
+                [$contribution->member->user->id],
+                'warning',
+                'Contribution Rejected',
+                'Your contribution of ₦' . number_format($contribution->amount, 2) . ' has been rejected. Reason: ' . $request->reason,
+                [
+                    'contribution_id' => $contribution->id,
+                    'amount' => $contribution->amount,
+                    'reason' => $request->reason,
+                ]
+            );
+        }
+
         return response()->json([
             'success' => true,
             'message' => 'Contribution rejected successfully'

@@ -47,6 +47,11 @@ class Investment extends Model
         return $this->hasMany(InvestmentReturn::class);
     }
 
+    public function withdrawalRequests(): HasMany
+    {
+        return $this->hasMany(InvestmentWithdrawalRequest::class);
+    }
+
     public function isPending(): bool
     {
         return $this->status === 'pending';

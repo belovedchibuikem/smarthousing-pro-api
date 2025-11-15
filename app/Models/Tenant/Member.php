@@ -128,4 +128,47 @@ class Member extends Model
     {
         return $this->user->first_name . ' ' . $this->user->last_name;
     }
+
+    /**
+     * Check if member has active subscription
+     * Note: This queries the central database (MemberSubscription)
+     */
+    public function hasActiveSubscription(): bool
+    {
+        $tenantId = tenant('id');
+        if (!$tenantId) {
+            return false;
+        }
+
+        return \App\Models\Central\MemberSubscription::where('business_id', $tenantId)
+            ->where('member_id', $this->id)
+            ->where('status', 'active')
+            ->where('end_date', '>', now())
+            ->where(function($query) {
+                $query->where('payment_status', 'approved')
+                      ->orWhere('payment_status', 'completed');
+            })
+            ->exists();
+    }
+
+    /**
+     * Get active subscription
+     */
+    public function getActiveSubscription()
+    {
+        $tenantId = tenant('id');
+        if (!$tenantId) {
+            return null;
+        }
+
+        return \App\Models\Central\MemberSubscription::where('business_id', $tenantId)
+            ->where('member_id', $this->id)
+            ->where('status', 'active')
+            ->where('end_date', '>', now())
+            ->where(function($query) {
+                $query->where('payment_status', 'approved')
+                      ->orWhere('payment_status', 'completed');
+            })
+            ->first();
+    }
 }

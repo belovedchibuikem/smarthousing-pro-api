@@ -20,6 +20,7 @@ class MemberSubscription extends Model
         'status',
         'start_date',
         'end_date',
+        'next_billing_date',
         'amount_paid',
         'payment_method',
         'payment_status',
@@ -39,6 +40,7 @@ class MemberSubscription extends Model
     protected $casts = [
         'start_date' => 'datetime',
         'end_date' => 'datetime',
+        'next_billing_date' => 'datetime',
         'amount_paid' => 'decimal:2',
         'approved_at' => 'datetime',
         'cancelled_at' => 'datetime',

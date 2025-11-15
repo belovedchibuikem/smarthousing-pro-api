@@ -19,7 +19,10 @@ class NotificationController extends Controller
 
     public function index(Request $request): JsonResponse
     {
-        $query = Notification::where('user_id', Auth::id());
+        $userId = $request->user()->id;
+        
+        $query = Notification::where('user_id', $userId)
+            ->select(['id', 'user_id', 'type', 'title', 'message', 'data', 'read_at', 'created_at', 'updated_at']);
 
         // Filter by type
         if ($request->has('type')) {
@@ -28,7 +31,11 @@ class NotificationController extends Controller
 
         // Filter by read status
         if ($request->has('read')) {
-            $query->where('read_at', $request->read ? '!=' : '=', null);
+            if ($request->read) {
+                $query->whereNotNull('read_at');
+            } else {
+                $query->whereNull('read_at');
+            }
         }
 
         $notifications = $query->orderBy('created_at', 'desc')
@@ -66,10 +73,17 @@ class NotificationController extends Controller
         ], 201);
     }
 
-    public function show(Notification $notification): JsonResponse
+    public function show(Request $request, string $notificationId): JsonResponse
     {
-        if ($notification->user_id !== Auth::id()) {
-            return response()->json(['message' => 'Unauthorized'], 403);
+        $userId = $request->user()->id;
+        
+        $notification = Notification::where('id', $notificationId)
+            ->where('user_id', $userId)
+            ->select(['id', 'user_id', 'type', 'title', 'message', 'data', 'read_at', 'created_at', 'updated_at'])
+            ->first();
+            
+        if (!$notification) {
+            return response()->json(['message' => 'Notification not found'], 404);
         }
 
         return response()->json([
@@ -77,13 +91,18 @@ class NotificationController extends Controller
         ]);
     }
 
-    public function markAsRead(Notification $notification): JsonResponse
+    public function markAsRead(Request $request, string $notificationId): JsonResponse
     {
-        if ($notification->user_id !== Auth::id()) {
-            return response()->json(['message' => 'Unauthorized'], 403);
+        $userId = $request->user()->id;
+        
+        $updated = Notification::where('id', $notificationId)
+            ->where('user_id', $userId)
+            ->whereNull('read_at')
+            ->update(['read_at' => now()]);
+            
+        if (!$updated) {
+            return response()->json(['message' => 'Notification not found or already read'], 404);
         }
-
-        $notification->update(['read_at' => now()]);
 
         return response()->json([
             'success' => true,
@@ -91,9 +110,9 @@ class NotificationController extends Controller
         ]);
     }
 
-    public function markAllAsRead(): JsonResponse
+    public function markAllAsRead(Request $request): JsonResponse
     {
-        Notification::where('user_id', Auth::id())
+        Notification::where('user_id', $request->user()->id)
             ->whereNull('read_at')
             ->update(['read_at' => now()]);
 
@@ -103,9 +122,11 @@ class NotificationController extends Controller
         ]);
     }
 
-    public function unreadCount(): JsonResponse
+    public function unreadCount(Request $request): JsonResponse
     {
-        $count = Notification::where('user_id', Auth::id())
+        $userId = $request->user()->id;
+        
+        $count = Notification::where('user_id', $userId)
             ->whereNull('read_at')
             ->count();
 
@@ -114,13 +135,17 @@ class NotificationController extends Controller
         ]);
     }
 
-    public function destroy(Notification $notification): JsonResponse
+    public function destroy(Request $request, string $notificationId): JsonResponse
     {
-        if ($notification->user_id !== Auth::id()) {
-            return response()->json(['message' => 'Unauthorized'], 403);
+        $userId = $request->user()->id;
+        
+        $deleted = Notification::where('id', $notificationId)
+            ->where('user_id', $userId)
+            ->delete();
+            
+        if (!$deleted) {
+            return response()->json(['message' => 'Notification not found'], 404);
         }
-
-        $notification->delete();
 
         return response()->json([
             'success' => true,

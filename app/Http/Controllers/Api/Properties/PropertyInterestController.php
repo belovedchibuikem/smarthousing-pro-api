@@ -7,6 +7,7 @@ use App\Http\Requests\Properties\PropertyInterestRequest;
 use App\Models\Tenant\Property;
 use App\Models\Tenant\PropertyInterest;
 use App\Models\Tenant\Mortgage;
+use App\Services\Communication\NotificationService;
 use Illuminate\Http\JsonResponse;
 use Illuminate\Support\Facades\Auth;
 use Illuminate\Http\Request;
@@ -16,6 +17,9 @@ use Carbon\Carbon;
 
 class PropertyInterestController extends Controller
 {
+    public function __construct(
+        protected NotificationService $notificationService
+    ) {}
     public function expressInterest(PropertyInterestRequest $request, String $propertyId): JsonResponse
     {
         $user =  $request->user();
@@ -247,6 +251,29 @@ class PropertyInterestController extends Controller
             'mortgage_preferences' => !empty($mortgagePreferences) ? $mortgagePreferences : null,
             'mortgage_flagged' => $mortgageFlagged,
         ]);
+
+        $interest->load(['member.user', 'property']);
+
+        // Notify admins about new property interest submission
+        if ($interest->member && $interest->member->user) {
+            $memberName = trim($interest->member->first_name . ' ' . $interest->member->last_name);
+            $propertyTitle = $interest->property->title ?? 'property';
+            
+            $this->notificationService->notifyAdmins(
+                'info',
+                'New Property Interest Submission',
+                "A new property interest for {$propertyTitle} has been submitted by {$memberName}",
+                [
+                    'interest_id' => $interest->id,
+                    'property_id' => $interest->property_id,
+                    'property_title' => $propertyTitle,
+                    'member_id' => $interest->member_id,
+                    'member_name' => $memberName,
+                    'interest_type' => $interest->interest_type,
+                    'funding_option' => $interest->funding_option,
+                ]
+            );
+        }
 
         return response()->json([
             'success' => true,

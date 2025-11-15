@@ -23,6 +23,7 @@ class Subscription extends Model
         'cancelled_at',
         'amount',
         'payment_reference',
+        'payment_method',
         'metadata',
         'current_period_start',
         'current_period_end',

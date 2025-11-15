@@ -16,6 +16,7 @@ class InvestmentWithdrawalRequest extends FormRequest
         return [
             'withdrawal_type' => 'required|in:full,partial',
             'amount' => 'required_if:withdrawal_type,partial|nullable|numeric|min:1000',
+            'reason' => 'nullable|string|max:500',
         ];
     }
 

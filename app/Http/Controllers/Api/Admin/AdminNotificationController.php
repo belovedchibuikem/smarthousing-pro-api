@@ -339,9 +339,16 @@ class AdminNotificationController extends Controller
     /**
      * Mark notification as read
      */
-    public function markAsRead(Notification $notification): JsonResponse
+    public function markAsRead(string $notificationId): JsonResponse
     {
         try {
+            $notification = Notification::find($notificationId);
+            if (!$notification) {
+                return response()->json([
+                    'success' => false,
+                    'message' => 'Notification not found',
+                ], 404);
+            }
             $notification->update(['read_at' => now()]);
 
             return response()->json([
@@ -422,9 +429,16 @@ class AdminNotificationController extends Controller
     /**
      * Delete a notification
      */
-    public function destroy(Notification $notification): JsonResponse
+    public function destroy(string $notificationId): JsonResponse
     {
         try {
+            $notification = Notification::find($notificationId);
+            if (!$notification) {
+                return response()->json([
+                    'success' => false,
+                    'message' => 'Notification not found',
+                ], 404);
+            }
             $notification->delete();
 
             Log::info('Admin deleted notification', [
@@ -439,7 +453,7 @@ class AdminNotificationController extends Controller
         } catch (\Exception $e) {
             Log::error('Failed to delete notification', [
                 'error' => $e->getMessage(),
-                'notification_id' => $notification->id,
+                'notification_id' => $notificationId,
             ]);
 
             return response()->json([

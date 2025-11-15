@@ -4,12 +4,16 @@ namespace App\Http\Controllers\Api\Admin;
 
 use App\Http\Controllers\Controller;
 use App\Models\Tenant\Contribution;
+use App\Services\Communication\NotificationService;
 use Illuminate\Http\JsonResponse;
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\Log;
 
 class ContributionController extends Controller
 {
+    public function __construct(
+        protected NotificationService $notificationService
+    ) {}
     public function index(Request $request): JsonResponse
     {
         $user = $request->user();
@@ -151,10 +155,26 @@ class ContributionController extends Controller
             'approved_by' => $user->id,
         ]);
 
+        $contribution->load('member.user');
+
+        // Notify the member about contribution approval
+        if ($contribution->member && $contribution->member->user) {
+            $this->notificationService->sendNotificationToUsers(
+                [$contribution->member->user->id],
+                'success',
+                'Contribution Approved',
+                'Your contribution of ₦' . number_format($contribution->amount, 2) . ' has been approved.',
+                [
+                    'contribution_id' => $contribution->id,
+                    'amount' => $contribution->amount,
+                ]
+            );
+        }
+
         return response()->json([
             'success' => true,
             'message' => 'Contribution approved successfully',
-            'data' => $contribution->fresh()->load(['member.user'])
+            'data' => $contribution
         ]);
     }
 
@@ -185,10 +205,27 @@ class ContributionController extends Controller
             'rejected_by' => $user->id,
         ]);
 
+        $contribution->load('member.user');
+
+        // Notify the member about contribution rejection
+        if ($contribution->member && $contribution->member->user) {
+            $this->notificationService->sendNotificationToUsers(
+                [$contribution->member->user->id],
+                'warning',
+                'Contribution Rejected',
+                'Your contribution of ₦' . number_format($contribution->amount, 2) . ' has been rejected. Reason: ' . $validated['rejection_reason'],
+                [
+                    'contribution_id' => $contribution->id,
+                    'amount' => $contribution->amount,
+                    'reason' => $validated['rejection_reason'],
+                ]
+            );
+        }
+
         return response()->json([
             'success' => true,
             'message' => 'Contribution rejected successfully',
-            'data' => $contribution->fresh()->load(['member.user'])
+            'data' => $contribution
         ]);
     }
 }

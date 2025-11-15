@@ -33,6 +33,8 @@ return Application::configure(basePath: dirname(__DIR__))
             'tenant' => \App\Http\Middleware\TenantMiddleware::class,
             'tenant_auth' => \App\Http\Middleware\TenantAuth::class,
             'super_admin_auth' => \App\Http\Middleware\SuperAdminAuth::class,
+            'tenant_subscription' => \App\Http\Middleware\TenantSubscriptionGuard::class,
+            'member_subscription' => \App\Http\Middleware\MemberSubscriptionGuard::class,
         ]);
     })
     ->withExceptions(function (Exceptions $exceptions) {

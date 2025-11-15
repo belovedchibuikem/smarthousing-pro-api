@@ -413,10 +413,19 @@ class TenantPaymentService
             ];
         }
 
-        $gateway = PaymentGateway::where('tenant_id', $tenant->id)
-            ->where('gateway_type', 'paystack')
-            ->where('is_enabled', true)
-            ->first();
+        // For subscriptions, use super admin payment gateways
+        $isSubscription = in_array($data['payment_type'] ?? '', ['subscription', 'member_subscription']);
+        
+        if ($isSubscription) {
+            $gateway = \App\Models\Central\PaymentGateway::where('name', 'paystack')
+                ->where('is_active', true)
+                ->first();
+        } else {
+            $gateway = PaymentGateway::where('tenant_id', $tenant->id)
+                ->where('gateway_type', 'paystack')
+                ->where('is_enabled', true)
+                ->first();
+        }
 
         if (!$gateway) {
             return [
@@ -425,7 +434,10 @@ class TenantPaymentService
             ];
         }
 
-        $paystackService = $this->makePaystackService($gateway);
+        // Handle both tenant and super admin gateways
+        $paystackService = $isSubscription 
+            ? $this->makePaystackServiceFromSuperAdmin($gateway)
+            : $this->makePaystackService($gateway);
 
         try {
             $user = $payment->user;
@@ -487,10 +499,19 @@ class TenantPaymentService
             ];
         }
 
-        $gateway = PaymentGateway::where('tenant_id', $tenant->id)
-            ->where('gateway_type', 'remita')
-            ->where('is_enabled', true)
-            ->first();
+        // For subscriptions, use super admin payment gateways
+        $isSubscription = in_array($data['payment_type'] ?? '', ['subscription', 'member_subscription']);
+        
+        if ($isSubscription) {
+            $gateway = \App\Models\Central\PaymentGateway::where('name', 'remita')
+                ->where('is_active', true)
+                ->first();
+        } else {
+            $gateway = PaymentGateway::where('tenant_id', $tenant->id)
+                ->where('gateway_type', 'remita')
+                ->where('is_enabled', true)
+                ->first();
+        }
 
         if (!$gateway) {
             return [
@@ -499,7 +520,10 @@ class TenantPaymentService
             ];
         }
 
-        $remitaService = $this->makeRemitaService($gateway);
+        // Handle both tenant and super admin gateways
+        $remitaService = $isSubscription 
+            ? $this->makeRemitaServiceFromSuperAdmin($gateway)
+            : $this->makeRemitaService($gateway);
 
         try {
             $remitaData = $remitaService->initialize([
@@ -1005,6 +1029,35 @@ class TenantPaymentService
             ->where('gateway_type', $gatewayType)
             ->where('is_enabled', true)
             ->first();
+    }
+
+    /**
+     * Create PaystackService from super admin PaymentGateway
+     */
+    protected function makePaystackServiceFromSuperAdmin(\App\Models\Central\PaymentGateway $gateway): PaystackService
+    {
+        $settings = $gateway->settings ?? [];
+        $credentials = [
+            'secret_key' => $settings['secret_key'] ?? '',
+            'public_key' => $settings['public_key'] ?? '',
+        ];
+        
+        return PaystackService::fromCredentials($credentials);
+    }
+
+    /**
+     * Create RemitaService from super admin PaymentGateway
+     */
+    protected function makeRemitaServiceFromSuperAdmin(\App\Models\Central\PaymentGateway $gateway): RemitaService
+    {
+        $settings = $gateway->settings ?? [];
+        $credentials = [
+            'merchant_id' => $settings['merchant_id'] ?? '',
+            'api_key' => $settings['api_key'] ?? '',
+            'service_type_id' => $settings['service_type_id'] ?? '',
+        ];
+        
+        return RemitaService::fromCredentials($credentials);
     }
 
     /**

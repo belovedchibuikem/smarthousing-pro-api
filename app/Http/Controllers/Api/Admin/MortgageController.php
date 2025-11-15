@@ -4,12 +4,16 @@ namespace App\Http\Controllers\Api\Admin;
 
 use App\Http\Controllers\Controller;
 use App\Models\Tenant\Mortgage;
+use App\Services\Communication\NotificationService;
 use Illuminate\Http\JsonResponse;
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\Validator;
 
 class MortgageController extends Controller
 {
+    public function __construct(
+        protected NotificationService $notificationService
+    ) {}
     public function index(Request $request): JsonResponse
     {
        
@@ -247,6 +251,23 @@ class MortgageController extends Controller
             'approved_by' => $user->id,
         ]);
 
+        $mortgage->load('member.user');
+
+        // Notify the member about mortgage approval
+        if ($mortgage->member && $mortgage->member->user) {
+            $this->notificationService->sendNotificationToUsers(
+                [$mortgage->member->user->id],
+                'success',
+                'Mortgage Approved',
+                'Your mortgage application of ₦' . number_format($mortgage->loan_amount, 2) . ' has been approved.',
+                [
+                    'mortgage_id' => $mortgage->id,
+                    'loan_amount' => $mortgage->loan_amount,
+                    'monthly_payment' => $mortgage->monthly_payment,
+                ]
+            );
+        }
+
         return response()->json([
             'success' => true,
             'message' => 'Mortgage approved successfully',
@@ -277,6 +298,23 @@ class MortgageController extends Controller
             'rejected_by' => $user->id,
             'notes' => ($mortgage->notes ?? '') . ($request->reason ? "\nRejected: " . $request->reason : ''),
         ]);
+
+        $mortgage->load('member.user');
+
+        // Notify the member about mortgage rejection
+        if ($mortgage->member && $mortgage->member->user) {
+            $this->notificationService->sendNotificationToUsers(
+                [$mortgage->member->user->id],
+                'warning',
+                'Mortgage Rejected',
+                'Your mortgage application of ₦' . number_format($mortgage->loan_amount, 2) . ' has been rejected.' . ($request->reason ? ' Reason: ' . $request->reason : ''),
+                [
+                    'mortgage_id' => $mortgage->id,
+                    'loan_amount' => $mortgage->loan_amount,
+                    'reason' => $request->reason ?? null,
+                ]
+            );
+        }
 
         return response()->json([
             'success' => true,

@@ -10,6 +10,7 @@ use App\Models\Tenant\Payment;
 use App\Models\Tenant\Wallet;
 use App\Services\Payment\PaymentService;
 use App\Services\Tenant\TenantPaymentService;
+use App\Services\Communication\NotificationService;
 use Illuminate\Http\JsonResponse;
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\DB;
@@ -19,7 +20,8 @@ class LoanRepaymentController extends Controller
 {
     public function __construct(
         protected PaymentService $paymentService,
-        protected TenantPaymentService $tenantPaymentService
+        protected TenantPaymentService $tenantPaymentService,
+        protected NotificationService $notificationService
     ) {}
 
     public function paymentMethods(Request $request): JsonResponse
@@ -405,10 +407,42 @@ class LoanRepaymentController extends Controller
 
         // Check if loan is fully repaid
         $loan = Loan::find($payment->metadata['loan_id']);
+        $loan->load('member.user');
         $totalRepaid = $loan->repayments()->sum('amount');
         
         if ($totalRepaid >= $loan->total_amount) {
             $loan->update(['status' => 'completed']);
+            
+            // Notify member that loan is fully repaid
+            if ($loan->member && $loan->member->user) {
+                $this->notificationService->sendNotificationToUsers(
+                    [$loan->member->user->id],
+                    'success',
+                    'Loan Fully Repaid',
+                    'Congratulations! Your loan of ₦' . number_format($loan->total_amount, 2) . ' has been fully repaid.',
+                    [
+                        'loan_id' => $loan->id,
+                        'total_amount' => $loan->total_amount,
+                    ]
+                );
+            }
+        } else {
+            // Notify member about successful repayment
+            if ($loan->member && $loan->member->user) {
+                $remainingBalance = $loan->total_amount - $totalRepaid;
+                $this->notificationService->sendNotificationToUsers(
+                    [$loan->member->user->id],
+                    'success',
+                    'Loan Repayment Successful',
+                    'Your loan repayment of ₦' . number_format($amount, 2) . ' was successful. Remaining balance: ₦' . number_format($remainingBalance, 2),
+                    [
+                        'loan_id' => $loan->id,
+                        'repayment_id' => $repayment->id,
+                        'amount' => $amount,
+                        'remaining_balance' => $remainingBalance,
+                    ]
+                );
+            }
         }
 
         return [

@@ -4,6 +4,7 @@ namespace App\Http\Controllers\Api\Admin;
 
 use App\Http\Controllers\Controller;
 use App\Models\Tenant\PropertyInterest;
+use App\Services\Communication\NotificationService;
 use Illuminate\Http\JsonResponse;
 use Illuminate\Http\Response;
 use Illuminate\Http\Request;
@@ -18,6 +19,9 @@ use Barryvdh\DomPDF\Facade\Pdf as DomPDF;
 
 class EoiFormController extends Controller
 {
+    public function __construct(
+        protected NotificationService $notificationService
+    ) {}
     public function index(Request $request): JsonResponse
     {
         try {
@@ -168,6 +172,24 @@ class EoiFormController extends Controller
         $interest->rejection_reason = null;
         $interest->save();
 
+        $interest->load(['member.user', 'property']);
+
+        // Notify the member about property interest approval
+        if ($interest->member && $interest->member->user) {
+            $propertyTitle = $interest->property->title ?? 'property';
+            $this->notificationService->sendNotificationToUsers(
+                [$interest->member->user->id],
+                'success',
+                'Property Interest Approved',
+                "Your expression of interest for {$propertyTitle} has been approved.",
+                [
+                    'interest_id' => $interest->id,
+                    'property_id' => $interest->property_id,
+                    'property_title' => $propertyTitle,
+                ]
+            );
+        }
+
         return response()->json([
             'success' => true,
             'message' => 'EOI form approved successfully.',
@@ -207,6 +229,25 @@ class EoiFormController extends Controller
         $interest->rejected_at = Carbon::now();
         $interest->rejected_by = $user->id;
         $interest->save();
+
+        $interest->load(['member.user', 'property']);
+
+        // Notify the member about property interest rejection
+        if ($interest->member && $interest->member->user) {
+            $propertyTitle = $interest->property->title ?? 'property';
+            $this->notificationService->sendNotificationToUsers(
+                [$interest->member->user->id],
+                'warning',
+                'Property Interest Rejected',
+                "Your expression of interest for {$propertyTitle} has been rejected. Reason: " . $validated['reason'],
+                [
+                    'interest_id' => $interest->id,
+                    'property_id' => $interest->property_id,
+                    'property_title' => $propertyTitle,
+                    'reason' => $validated['reason'],
+                ]
+            );
+        }
 
         return response()->json([
             'success' => true,

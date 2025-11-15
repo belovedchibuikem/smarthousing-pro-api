@@ -134,6 +134,22 @@ class InvestmentController extends Controller
             'approved_by' => Auth::id(),
         ]);
 
+        $investment->load('member.user');
+        
+        // Notify the member about investment approval
+        if ($investment->member && $investment->member->user) {
+            $this->notificationService->sendNotificationToUsers(
+                [$investment->member->user->id],
+                'success',
+                'Investment Approved',
+                'Your investment of ₦' . number_format($investment->amount, 2) . ' has been approved and is now active.',
+                [
+                    'investment_id' => $investment->id,
+                    'amount' => $investment->amount,
+                ]
+            );
+        }
+
         return response()->json([
             'success' => true,
             'message' => 'Investment approved successfully'
@@ -159,6 +175,23 @@ class InvestmentController extends Controller
             'rejected_at' => now(),
             'rejected_by' => Auth::id(),
         ]);
+
+        $investment->load('member.user');
+        
+        // Notify the member about investment rejection
+        if ($investment->member && $investment->member->user) {
+            $this->notificationService->sendNotificationToUsers(
+                [$investment->member->user->id],
+                'warning',
+                'Investment Rejected',
+                'Your investment of ₦' . number_format($investment->amount, 2) . ' has been rejected. Reason: ' . $request->reason,
+                [
+                    'investment_id' => $investment->id,
+                    'amount' => $investment->amount,
+                    'reason' => $request->reason,
+                ]
+            );
+        }
 
         return response()->json([
             'success' => true,
