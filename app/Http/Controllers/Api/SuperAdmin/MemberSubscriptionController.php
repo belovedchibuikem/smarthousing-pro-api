@@ -5,9 +5,12 @@ namespace App\Http\Controllers\Api\SuperAdmin;
 use App\Http\Controllers\Controller;
 use App\Models\Central\MemberSubscription;
 use App\Models\Central\MemberSubscriptionPackage;
+use App\Models\Central\Tenant;
 use Illuminate\Http\JsonResponse;
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\Log;
+use Illuminate\Support\Facades\DB;
+use Illuminate\Support\Facades\Config;
 
 class MemberSubscriptionController extends Controller
 {
@@ -96,11 +99,79 @@ class MemberSubscriptionController extends Controller
             return response()->json([
                 'success' => true,
                 'subscriptions' => $subscriptions->map(function ($subscription) {
+                    $memberName = 'Unknown Member';
+                    $memberNumber = null;
+                    
+                    // Fetch member name from tenant database
+                    try {
+                        $tenant = Tenant::find($subscription->business_id);
+                        if ($tenant) {
+                            $databaseName = $tenant->id . '_smart_housing';
+                            
+                            // Check if database exists
+                            $databaseExists = DB::connection('mysql')
+                                ->select("SELECT SCHEMA_NAME FROM INFORMATION_SCHEMA.SCHEMATA WHERE SCHEMA_NAME = ?", [$databaseName]);
+                            
+                            if (!empty($databaseExists)) {
+                                // Create temporary connection to tenant database
+                                Config::set('database.connections.tenant_temp', [
+                                    'driver' => 'mysql',
+                                    'host' => env('DB_HOST', '127.0.0.1'),
+                                    'port' => env('DB_PORT', '3306'),
+                                    'database' => $databaseName,
+                                    'username' => env('DB_USERNAME', 'root'),
+                                    'password' => env('DB_PASSWORD', ''),
+                                    'charset' => 'utf8mb4',
+                                    'collation' => 'utf8mb4_unicode_ci',
+                                    'prefix' => '',
+                                    'strict' => true,
+                                    'engine' => null,
+                                ]);
+                                
+                                DB::purge('tenant_temp');
+                                DB::connection('tenant_temp')->reconnect();
+                                
+                                // Fetch member with user relationship
+                                $member = DB::connection('tenant_temp')
+                                    ->table('members')
+                                    ->join('users', 'members.user_id', '=', 'users.id')
+                                    ->where('members.id', $subscription->member_id)
+                                    ->select(
+                                        'members.member_number',
+                                        'users.first_name',
+                                        'users.last_name',
+                                        'users.email'
+                                    )
+                                    ->first();
+                                
+                                if ($member) {
+                                    $memberName = trim(($member->first_name ?? '') . ' ' . ($member->last_name ?? ''));
+                                    if (empty($memberName)) {
+                                        $memberName = $member->email ?? 'Unknown Member';
+                                    }
+                                    $memberNumber = $member->member_number;
+                                }
+                                
+                                // Disconnect temporary connection
+                                Config::forget('database.connections.tenant_temp');
+                            }
+                        }
+                    } catch (\Exception $e) {
+                        Log::warning('Failed to fetch member name for subscription', [
+                            'subscription_id' => $subscription->id,
+                            'member_id' => $subscription->member_id,
+                            'business_id' => $subscription->business_id,
+                            'error' => $e->getMessage(),
+                        ]);
+                    }
+                    
                     return [
                         'id' => $subscription->id,
                         'business_id' => $subscription->business_id,
                         'business_name' => $subscription->business->name ?? null,
                         'member_id' => $subscription->member_id,
+                        'member_name' => $memberName,
+                        'member_number' => $memberNumber,
                         'package_id' => $subscription->package_id,
                         'package_name' => $subscription->package->name ?? 'Unknown',
                         'status' => $subscription->status,

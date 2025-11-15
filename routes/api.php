@@ -66,8 +66,30 @@ Route::middleware(['tenant'])->prefix('auth')->group(function () {
     Route::post('reset-password', [App\Http\Controllers\Api\Auth\ResetPasswordController::class, 'reset']);
 });
 
+// Public onboarding routes
+Route::prefix('onboarding')->group(function () {
+    Route::get('packages', [App\Http\Controllers\Api\Onboarding\OnboardingController::class, 'packages']);
+});
+
+// Public business onboarding routes (no tenant context needed)
+Route::prefix('business-onboarding')->group(function () {
+    Route::post('/', [App\Http\Controllers\Api\Onboarding\BusinessOnboardingController::class, 'store']);
+    Route::get('/check-slug/{slug}', [App\Http\Controllers\Api\Onboarding\BusinessOnboardingController::class, 'checkSlugAvailability']);
+});
+
 // Public tenant validation endpoint
 Route::get('tenant/validate', [App\Http\Controllers\Api\Public\TenantValidationController::class, 'validate']);
+
+// Public SaaS Landing Page Routes (no authentication required)
+Route::prefix('public/saas')->group(function () {
+    Route::get('/pages/{pageType}', [App\Http\Controllers\Api\Public\SaasPageController::class, 'getPage']);
+    Route::get('/header', [App\Http\Controllers\Api\Public\SaasPageController::class, 'getHeader']);
+    Route::get('/discussions', [App\Http\Controllers\Api\Public\SaasPageController::class, 'getDiscussions']);
+    Route::get('/testimonials', [App\Http\Controllers\Api\Public\SaasPageController::class, 'getTestimonials']);
+    Route::get('/team', [App\Http\Controllers\Api\Public\SaasPageController::class, 'getTeam']);
+    Route::get('/milestones', [App\Http\Controllers\Api\Public\SaasPageController::class, 'getMilestones']);
+    Route::get('/values', [App\Http\Controllers\Api\Public\SaasPageController::class, 'getValues']);
+});
 
 // Public tenant routes (no authentication required, but tenant context needed)
 Route::middleware(['tenant'])->group(function () {
@@ -491,7 +513,7 @@ Route::prefix('reports')->group(function () {
 
 
 
-    // Onboarding routes
+    // Onboarding routes (for existing tenants)
     Route::prefix('onboarding')->group(function () {
         Route::get('/', [App\Http\Controllers\Api\Onboarding\OnboardingController::class, 'index']);
         Route::put('/steps/{step}', [App\Http\Controllers\Api\Onboarding\OnboardingController::class, 'updateStep']);
@@ -499,12 +521,6 @@ Route::prefix('reports')->group(function () {
         Route::post('/steps/{step}/skip', [App\Http\Controllers\Api\Onboarding\OnboardingController::class, 'skipStep']);
         Route::post('/reset', [App\Http\Controllers\Api\Onboarding\OnboardingController::class, 'reset']);
         Route::get('/next-step', [App\Http\Controllers\Api\Onboarding\OnboardingController::class, 'getNextStep']);
-    });
-
-    // Business Onboarding routes
-    Route::prefix('business-onboarding')->group(function () {
-        Route::post('/', [App\Http\Controllers\Api\Onboarding\BusinessOnboardingController::class, 'store']);
-        Route::get('/check-slug/{slug}', [App\Http\Controllers\Api\Onboarding\BusinessOnboardingController::class, 'checkSlugAvailability']);
     });
 
     
@@ -1228,6 +1244,53 @@ Route::prefix('super-admin')->middleware(['super_admin_auth'])->group(function (
                 Route::put('/{setting}', [App\Http\Controllers\Api\SuperAdmin\PlatformSettingsController::class, 'update']);
                 Route::delete('/{setting}', [App\Http\Controllers\Api\SuperAdmin\PlatformSettingsController::class, 'destroy']);
             });
+
+        // SaaS Landing Page CMS Routes
+        Route::prefix('saas-pages')->group(function () {
+            Route::get('/', [App\Http\Controllers\Api\SuperAdmin\SaasPageController::class, 'index']);
+            Route::get('/{pageType}', [App\Http\Controllers\Api\SuperAdmin\SaasPageController::class, 'show']);
+            Route::post('/', [App\Http\Controllers\Api\SuperAdmin\SaasPageController::class, 'store']);
+            Route::put('/{id}', [App\Http\Controllers\Api\SuperAdmin\SaasPageController::class, 'update']);
+            Route::delete('/{id}', [App\Http\Controllers\Api\SuperAdmin\SaasPageController::class, 'destroy']);
+            Route::post('/reorder', [App\Http\Controllers\Api\SuperAdmin\SaasPageController::class, 'reorder']);
+            Route::post('/{id}/publish', [App\Http\Controllers\Api\SuperAdmin\SaasPageController::class, 'publish']);
+        });
+
+        Route::prefix('saas-community')->group(function () {
+            Route::get('/', [App\Http\Controllers\Api\SuperAdmin\SaasCommunityController::class, 'index']);
+            Route::post('/', [App\Http\Controllers\Api\SuperAdmin\SaasCommunityController::class, 'store']);
+            Route::put('/{id}', [App\Http\Controllers\Api\SuperAdmin\SaasCommunityController::class, 'update']);
+            Route::delete('/{id}', [App\Http\Controllers\Api\SuperAdmin\SaasCommunityController::class, 'destroy']);
+            Route::post('/reorder', [App\Http\Controllers\Api\SuperAdmin\SaasCommunityController::class, 'reorder']);
+        });
+
+        Route::prefix('saas-testimonials')->group(function () {
+            Route::get('/', [App\Http\Controllers\Api\SuperAdmin\SaasTestimonialController::class, 'index']);
+            Route::post('/', [App\Http\Controllers\Api\SuperAdmin\SaasTestimonialController::class, 'store']);
+            Route::put('/{id}', [App\Http\Controllers\Api\SuperAdmin\SaasTestimonialController::class, 'update']);
+            Route::delete('/{id}', [App\Http\Controllers\Api\SuperAdmin\SaasTestimonialController::class, 'destroy']);
+        });
+
+        Route::prefix('saas-team')->group(function () {
+            Route::get('/', [App\Http\Controllers\Api\SuperAdmin\SaasTeamController::class, 'index']);
+            Route::post('/', [App\Http\Controllers\Api\SuperAdmin\SaasTeamController::class, 'store']);
+            Route::put('/{id}', [App\Http\Controllers\Api\SuperAdmin\SaasTeamController::class, 'update']);
+            Route::delete('/{id}', [App\Http\Controllers\Api\SuperAdmin\SaasTeamController::class, 'destroy']);
+        });
+
+        Route::prefix('saas-milestones')->group(function () {
+            Route::get('/', [App\Http\Controllers\Api\SuperAdmin\SaasMilestoneController::class, 'index']);
+            Route::post('/', [App\Http\Controllers\Api\SuperAdmin\SaasMilestoneController::class, 'store']);
+            Route::put('/{id}', [App\Http\Controllers\Api\SuperAdmin\SaasMilestoneController::class, 'update']);
+            Route::delete('/{id}', [App\Http\Controllers\Api\SuperAdmin\SaasMilestoneController::class, 'destroy']);
+        });
+
+        Route::prefix('saas-values')->group(function () {
+            Route::get('/', [App\Http\Controllers\Api\SuperAdmin\SaasValueController::class, 'index']);
+            Route::post('/', [App\Http\Controllers\Api\SuperAdmin\SaasValueController::class, 'store']);
+            Route::put('/{id}', [App\Http\Controllers\Api\SuperAdmin\SaasValueController::class, 'update']);
+            Route::delete('/{id}', [App\Http\Controllers\Api\SuperAdmin\SaasValueController::class, 'destroy']);
+        });
 
  });
 

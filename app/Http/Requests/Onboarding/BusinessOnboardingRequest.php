@@ -16,7 +16,19 @@ class BusinessOnboardingRequest extends FormRequest
         return [
             // Business Information
             'business_name' => 'required|string|max:255',
-            'slug' => 'required|string|max:255|unique:tenants,slug',
+            'slug' => [
+                'required',
+                'string',
+                'max:255',
+                'regex:/^[a-z0-9]([a-z0-9\-]{0,61}[a-z0-9])?$/',
+                function ($attribute, $value, $fail) {
+                    // Check if slug exists in tenant data JSON field
+                    $exists = \App\Models\Central\Tenant::whereRaw("JSON_EXTRACT(data, '$.slug') = ?", [$value])->exists();
+                    if ($exists) {
+                        $fail('This subdomain is already taken. Please choose a different one.');
+                    }
+                },
+            ],
             'contact_email' => 'required|email|max:255',
             'contact_phone' => 'required|string|max:20',
             'address' => 'required|string|max:1000',
@@ -25,6 +37,7 @@ class BusinessOnboardingRequest extends FormRequest
             
             // Package Selection
             'package_id' => 'required|uuid|exists:packages,id',
+            'payment_method' => 'nullable|string|in:manual,paystack,remita,stripe',
             
             // Admin Information
             'admin_first_name' => 'required|string|max:255',

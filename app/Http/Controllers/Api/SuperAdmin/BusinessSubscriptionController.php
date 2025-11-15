@@ -10,6 +10,7 @@ use Illuminate\Http\JsonResponse;
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\Log;
 use Illuminate\Support\Facades\DB;
+use Illuminate\Support\Facades\Hash;
 
 class BusinessSubscriptionController extends Controller
 {
@@ -336,6 +337,24 @@ class BusinessSubscriptionController extends Controller
                 $tenantData = $tenant->data ?? [];
                 $tenantData['subscription_status'] = 'active';
                 $tenantData['subscription_ends_at'] = $subscription->ends_at?->toDateString();
+                
+                // Check if tenant is approved and payment is approved - activate tenant
+                $tenantStatus = $tenantData['status'] ?? 'pending_approval';
+                $isOnboarding = $subscription->metadata['onboarding'] ?? false;
+                
+                // Database and admin user are already created during onboarding
+                // Just activate the tenant when payment is approved
+                if ($isOnboarding && $tenantStatus === 'approved' && $payment->approval_status === 'approved') {
+                    // Activate tenant (database already exists from onboarding)
+                    $tenantData['status'] = 'active';
+                    $tenantData['activated_at'] = now()->toDateTimeString();
+                    
+                    Log::info('Tenant activated on payment approval', [
+                        'tenant_id' => $tenant->id,
+                        'subscription_id' => $subscription->id,
+                    ]);
+                }
+                
                 $tenant->update(['data' => $tenantData]);
             }
 
@@ -444,4 +463,5 @@ class BusinessSubscriptionController extends Controller
             ], 500);
         }
     }
+
 }

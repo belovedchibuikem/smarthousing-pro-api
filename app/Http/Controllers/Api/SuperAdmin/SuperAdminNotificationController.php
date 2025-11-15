@@ -19,10 +19,10 @@ class SuperAdminNotificationController extends Controller
             // Try multiple ways to get the authenticated user ID
             $userId = $request->user()?->id;
             if (!$userId) {
-                $userId = Auth::guard('super_admin')->id();
+                $userId = $request->user()?->id;
             }
             if (!$userId) {
-                $userId = Auth::id();
+                $userId = $request->user()?->id;
             }
             
             if (!$userId) {
@@ -93,7 +93,7 @@ class SuperAdminNotificationController extends Controller
                 $userId = Auth::guard('super_admin')->id();
             }
             if (!$userId) {
-                $userId = Auth::id();
+                $userId = $request->user()?->id;
             }
             
             if (!$userId) {
