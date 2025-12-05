@@ -20,20 +20,28 @@ Route::options('{any}', function (Request $request) {
     $origin = $request->header('Origin');
     
     // Check if origin is allowed
-    $allowedOrigins = [
+    $allowedOrigins = array_filter([
         'http://localhost:3000',
         'http://127.0.0.1:3000',
         'http://localhost:8000',
         'http://127.0.0.1:8000',
         'http://frsc.localhost:3000',
-    ];
+        env('FRONTEND_URL'), // Dynamic frontend URL from environment
+        env('PLATFORM_DOMAIN') ? 'https://' . env('PLATFORM_DOMAIN') : null, // Dynamic platform domain
+    ]);
     
     // Check patterns
+    $platformDomain = env('PLATFORM_DOMAIN');
     $allowedPatterns = [
         '#^http://(.*\.)?localhost:\d+$#',
         '#^http://(.*\.)?127\.0\.0\.1:\d+$#',
         '#^http://.*\.localhost:\d+$#',
     ];
+    
+    // Add dynamic pattern for platform domain subdomains if configured
+    if ($platformDomain) {
+        $allowedPatterns[] = '#^https://(.*\.)?' . preg_quote($platformDomain, '#') . '$#';
+    }
     
     $isAllowed = false;
     if ($origin) {
@@ -58,6 +66,31 @@ Route::options('{any}', function (Request $request) {
 
 // Public routes (no authentication required, but tenant context needed for registration/login)
 Route::middleware(['tenant'])->prefix('auth')->group(function () {
+    Route::get('recaptcha-site-key', function () {
+        $recaptchaService = app(\App\Services\RecaptchaService::class);
+        $isEnabled = $recaptchaService->isEnabled();
+        $siteKey = config('services.recaptcha.site_key', '');
+        $secretKey = config('services.recaptcha.secret_key', '');
+        $appEnv = config('app.env');
+        $skipInLocal = config('services.recaptcha.skip_in_local', true);
+        
+        // Diagnostic information (can be removed in production)
+        $diagnostics = [
+            'enabled' => $isEnabled,
+            'site_key' => $isEnabled ? $siteKey : '',
+            'app_env' => $appEnv,
+            'skip_in_local' => $skipInLocal,
+            'has_site_key' => !empty($siteKey),
+            'has_secret_key' => !empty($secretKey),
+            'reason_disabled' => !$isEnabled ? (
+                empty($secretKey) ? 'secret_key_not_configured' : 
+                ($skipInLocal && in_array($appEnv, ['local', 'development']) ? 'disabled_in_local_environment' : 
+                (config('services.recaptcha.enabled', true) === false ? 'explicitly_disabled' : 'unknown'))
+            ) : null,
+        ];
+        
+        return response()->json($diagnostics);
+    });
     Route::post('register', [RegisterController::class, 'register']);
     Route::post('login', [LoginController::class, 'login']);
     Route::post('verify-otp', [App\Http\Controllers\Api\Auth\OtpController::class, 'verifyOtp']);
@@ -114,6 +147,12 @@ Route::middleware(['tenant', 'tenant_auth'])->group(function () {
         Route::get('ai/recommendations', [App\Http\Controllers\Api\AI\RecommendationController::class, 'index']);
     });
 
+     Route::prefix('properties')->group(function () {
+    Route::get('/{property}/documents', [App\Http\Controllers\Api\Properties\PropertyDocumentController::class, 'index']);
+    });
+    Route::prefix('user')->group(function () {
+    Route::post('profile/upload-payment-evidence', [App\Http\Controllers\Api\User\ProfileController::class, 'uploadPaymentEvidence']);
+    });
     // User routes that require active subscription (wrapped in middleware)
     Route::middleware(['member_subscription'])->group(function () {
         // Loan Products routes
@@ -210,9 +249,7 @@ Route::middleware(['tenant', 'tenant_auth'])->group(function () {
         Route::prefix('user')->group(function () {
             Route::get('profile', [App\Http\Controllers\Api\User\ProfileController::class, 'show']);
         Route::put('profile', [App\Http\Controllers\Api\User\ProfileController::class, 'update']);
-        Route::post('profile/avatar', [App\Http\Controllers\Api\User\ProfileController::class, 'uploadAvatar']);
-        Route::post('profile/upload-payment-evidence', [App\Http\Controllers\Api\User\ProfileController::class, 'uploadPaymentEvidence']);
-        
+        Route::post('profile/avatar', [App\Http\Controllers\Api\User\ProfileController::class, 'uploadAvatar']);        
         // User Settings routes
         Route::prefix('settings')->group(function () {
             Route::get('/', [App\Http\Controllers\Api\User\UserSettingsController::class, 'index']);
@@ -451,11 +488,7 @@ Route::middleware(['tenant', 'tenant_auth'])->group(function () {
         Route::delete('/{document}', [App\Http\Controllers\Api\Documents\DocumentController::class, 'destroy']);
     });
     
-    // Bulk Upload routes (authenticated)
-    Route::prefix('bulk')->group(function () {
-        Route::get('/members/template', [App\Http\Controllers\Api\Members\BulkMemberController::class, 'downloadTemplate']);
-        Route::post('/members/upload', [App\Http\Controllers\Api\Members\BulkMemberController::class, 'uploadBulk']);
-    });
+   
     
 
      // Membership routes
@@ -470,8 +503,10 @@ Route::middleware(['tenant', 'tenant_auth'])->group(function () {
         Route::post('/{property}/express-interest', [App\Http\Controllers\Api\Properties\PropertyInterestController::class, 'expressInterest']);
         Route::get('/my-interests', [App\Http\Controllers\Api\Properties\PropertyInterestController::class, 'getMyInterests']);
         Route::delete('/interests/{interest}', [App\Http\Controllers\Api\Properties\PropertyInterestController::class, 'withdrawInterest']);
-        Route::get('/{property}/documents', [App\Http\Controllers\Api\Properties\PropertyDocumentController::class, 'index']);
         Route::post('/documents', [App\Http\Controllers\Api\Properties\PropertyDocumentController::class, 'store']);
+        Route::get('/documents/{document}', [App\Http\Controllers\Api\Properties\PropertyDocumentController::class, 'show']);
+        Route::put('/documents/{document}', [App\Http\Controllers\Api\Properties\PropertyDocumentController::class, 'update']);
+        Route::get('/documents/{document}/download', [App\Http\Controllers\Api\Properties\PropertyDocumentController::class, 'download']);
         Route::delete('/documents/{document}', [App\Http\Controllers\Api\Properties\PropertyDocumentController::class, 'destroy']);
     });
 
@@ -555,6 +590,10 @@ Route::prefix('admin')->middleware(['tenant', 'tenant_auth', 'role:admin', 'tena
     });
     
     // Member Management routes
+    Route::prefix('bulk')->group(function () {
+        Route::get('/members/template', [App\Http\Controllers\Api\Members\BulkMemberController::class, 'downloadTemplate']);
+        Route::post('/members/upload', [App\Http\Controllers\Api\Members\BulkMemberController::class, 'uploadBulk']);
+    });
     Route::prefix('members')->group(function () {
         Route::get('/', [App\Http\Controllers\Api\Members\MemberController::class, 'index']);
         Route::post('/', [App\Http\Controllers\Api\Members\MemberController::class, 'store']);
@@ -569,6 +608,8 @@ Route::prefix('admin')->middleware(['tenant', 'tenant_auth', 'role:admin', 'tena
         Route::post('/{id}/kyc/approve', [App\Http\Controllers\Api\Members\MemberController::class, 'approveKyc']);
         Route::post('/{id}/kyc/reject', [App\Http\Controllers\Api\Members\MemberController::class, 'rejectKyc']);
         Route::delete('/{id}', [App\Http\Controllers\Api\Members\MemberController::class, 'destroy']);
+         // Bulk Upload routes (authenticated)
+    
     });
     
     // User Management routes (authenticated)
@@ -772,6 +813,13 @@ Route::prefix('admin')->middleware(['tenant', 'tenant_auth', 'role:admin', 'tena
         Route::post('/', [App\Http\Controllers\Api\Admin\PropertyPaymentPlanController::class, 'store']);
         Route::get('/{plan}', [App\Http\Controllers\Api\Admin\PropertyPaymentPlanController::class, 'show']);
         Route::put('/{plan}', [App\Http\Controllers\Api\Admin\PropertyPaymentPlanController::class, 'update']);
+    });
+    
+    // Property Subscriptions routes
+    Route::prefix('property-subscriptions')->group(function () {
+        Route::get('/', [App\Http\Controllers\Api\Admin\PropertySubscriptionController::class, 'index']);
+        Route::get('/{allocation}', [App\Http\Controllers\Api\Admin\PropertySubscriptionController::class, 'show']);
+        Route::post('/{allocation}/certificate', [App\Http\Controllers\Api\Admin\PropertySubscriptionController::class, 'generateCertificate']);
     });
 
     Route::prefix('internal-mortgages')->group(function () {
@@ -1018,6 +1066,8 @@ Route::prefix('admin')->middleware(['tenant', 'tenant_auth', 'role:admin', 'tena
     
     // Bulk Upload routes
     Route::prefix('bulk')->group(function () {
+        Route::get('/members/template', [App\Http\Controllers\Api\Members\BulkMemberController::class, 'downloadTemplate']);
+        Route::post('/members/upload', [App\Http\Controllers\Api\Members\BulkMemberController::class, 'uploadBulk']);
         Route::get('/mortgages/template', [App\Http\Controllers\Api\Admin\BulkMortgageController::class, 'downloadTemplate']);
         Route::post('/mortgages/upload', [App\Http\Controllers\Api\Admin\BulkMortgageController::class, 'uploadBulk']);
         Route::get('/properties/template', [App\Http\Controllers\Api\Admin\BulkPropertyController::class, 'downloadTemplate']);
@@ -1036,6 +1086,8 @@ Route::prefix('admin')->middleware(['tenant', 'tenant_auth', 'role:admin', 'tena
         Route::post('/internal-mortgage-repayments/upload', [App\Http\Controllers\Api\Admin\BulkMortgageRepaymentController::class, 'uploadInternalBulk']);
         Route::get('/refund/template', [App\Http\Controllers\Api\Admin\BulkRefundController::class, 'downloadTemplate']);
         Route::post('/refund/upload', [App\Http\Controllers\Api\Admin\BulkRefundController::class, 'uploadBulk']);
+        Route::get('/internal-mortgages/template', [App\Http\Controllers\Api\Admin\BulkInternalMortgagePlanController::class, 'downloadTemplate']);
+        Route::post('/internal-mortgages/upload', [App\Http\Controllers\Api\Admin\BulkInternalMortgagePlanController::class, 'uploadBulk']);
     });
 });
 

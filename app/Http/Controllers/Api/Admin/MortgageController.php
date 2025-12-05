@@ -120,7 +120,7 @@ class MortgageController extends Controller
             return response()->json(['message' => 'Unauthenticated'], 401);
         }
 
-        $mortgage = Mortgage::with(['member.user', 'provider', 'property'])->findOrFail($id);
+        $mortgage = Mortgage::with(['member.user', 'provider', 'property', 'repayments'])->findOrFail($id);
 
         return response()->json([
             'success' => true,

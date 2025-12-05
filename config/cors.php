@@ -19,7 +19,7 @@ return [
 
     'allowed_methods' => ['*'],
 
-    'allowed_origins' => [
+    'allowed_origins' => array_values(array_filter([
         'http://localhost:3000',
         'http://127.0.0.1:3000',
         'http://localhost:8000',
@@ -27,13 +27,17 @@ return [
         'http://localhost:3001',
         'http://127.0.0.1:3001',
         'http://frsc.localhost:3000',
-    ],
+        env('FRONTEND_URL'), // Dynamic frontend URL from environment
+        env('PLATFORM_DOMAIN') ? 'https://' . env('PLATFORM_DOMAIN') : null, // Dynamic platform domain
+    ])),
 
-    'allowed_origins_patterns' => [
+    'allowed_origins_patterns' => array_merge([
         '#^http://(.*\.)?localhost:\d+$#',
         '#^http://(.*\.)?127\.0\.0\.1:\d+$#',
         '#^http://.*\.localhost:\d+$#', // Match subdomains like frsc.localhost:3000
-    ],
+    ], env('PLATFORM_DOMAIN') ? [
+        '#^https://(.*\.)?' . preg_quote(env('PLATFORM_DOMAIN'), '#') . '$#', // Dynamic pattern for platform domain subdomains
+    ] : []),
 
     'allowed_headers' => ['*'],
 

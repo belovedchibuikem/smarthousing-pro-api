@@ -4,6 +4,7 @@ namespace App\Http\Controllers\Api\Admin;
 
 use App\Http\Controllers\Controller;
 use App\Models\Tenant\Contribution;
+use App\Models\Tenant\EquityContribution;
 use App\Models\Tenant\EquityTransaction;
 use App\Models\Tenant\InvestmentReturn;
 use App\Models\Tenant\Loan;
@@ -288,7 +289,7 @@ class RefundController extends Controller
             return response()->json(['message' => 'Unauthenticated'], 401);
         }
 
-        $refund = Refund::with(['member.user', 'requestedBy', 'approvedBy', 'rejectedBy', 'processedBy'])
+        $refund = Refund::with(['member.user.wallet.transactions', 'requestedBy', 'approvedBy', 'rejectedBy', 'processedBy'])
             ->findOrFail($id);
 
         return response()->json([
@@ -585,6 +586,17 @@ class RefundController extends Controller
 
         $investmentAvailable = max(0, $investmentReturnsTotal - $investmentRefunds);
 
+        // Calculate equity contributions and refunds
+        $totalEquityContributions = (float) EquityContribution::where('member_id', $member->id)
+            ->where('status', 'approved')
+            ->sum('amount');
+
+        $equityRefunds = (float) Refund::where('member_id', $member->id)
+            ->where('source', 'equity_wallet')
+            ->sum('amount');
+
+        $equityAvailable = max(0, $totalEquityContributions - $equityRefunds);
+
         $equityWallet = $member->equityWalletBalance;
         $equityBalance = (float) ($equityWallet->balance ?? 0);
 
@@ -626,6 +638,9 @@ class RefundController extends Controller
             ],
             'equity_wallet' => [
                 'balance' => $equityBalance,
+                'total' => $totalEquityContributions,
+                'refunded' => $equityRefunds,
+                'available' => $equityAvailable,
             ],
             'loans' => [
                 'count' => $loanData->count(),

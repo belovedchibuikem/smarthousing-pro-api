@@ -16,8 +16,21 @@ class ForgotPasswordController extends Controller
 	public function sendResetLinkEmail(Request $request): JsonResponse
 	{
 		$request->validate([
-			'email' => 'required|email|exists:users,email'
+			'email' => 'required|email|exists:users,email',
+			'recaptcha_token' => 'required|string',
 		]);
+
+		// Verify reCAPTCHA
+		$recaptchaService = app(\App\Services\RecaptchaService::class);
+		$token = $request->input('recaptcha_token');
+		$remoteIp = $request->ip();
+
+		if (!$recaptchaService->verify($token, $remoteIp)) {
+			return response()->json([
+				'success' => false,
+				'message' => 'reCAPTCHA verification failed. Please try again.',
+			], 422);
+		}
 
 		$user = User::where('email', $request->email)->first();
 		

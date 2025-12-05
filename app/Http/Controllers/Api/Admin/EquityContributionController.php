@@ -55,6 +55,11 @@ class EquityContributionController extends Controller
     public function show(string $id): JsonResponse
     {
         $contribution = EquityContribution::with(['member.user', 'plan', 'approver'])->findOrFail($id);
+        
+        // Load payment metadata if available
+        if ($contribution->payment_metadata && is_array($contribution->payment_metadata)) {
+            // Ensure notes are accessible
+        }
 
         return response()->json([
             'success' => true,

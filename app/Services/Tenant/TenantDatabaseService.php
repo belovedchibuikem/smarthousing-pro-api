@@ -11,11 +11,29 @@ use Illuminate\Support\Facades\Config;
 class TenantDatabaseService
 {
     /**
+     * Get the database prefix from environment or config
+     */
+    protected function getDatabasePrefix(): string
+    {
+        return env('TENANCY_DB_PREFIX', config('tenancy.database.prefix', ''));
+    }
+
+    /**
+     * Get the full database name with prefix
+     */
+    public function getFullDatabaseName(string $baseName): string
+    {
+        $prefix = $this->getDatabasePrefix();
+        return $prefix . $baseName;
+    }
+
+    /**
      * Create tenant database from SQL file
      */
     public function createDatabaseFromSql(Tenant $tenant): bool
     {
-        $databaseName = $tenant->id . '_smart_housing';
+        $baseDatabaseName = $tenant->id . '_smart_housing';
+        $databaseName = $this->getFullDatabaseName($baseDatabaseName);
         
         try {
             // Check if database already exists
@@ -92,10 +110,17 @@ class TenantDatabaseService
     
     /**
      * Check if tenant database exists
+     * @param string $databaseName - Can be base name (without prefix) or full name (with prefix)
      */
     public function databaseExists(string $databaseName): bool
     {
         try {
+            // If database name doesn't start with prefix, add it
+            $prefix = $this->getDatabasePrefix();
+            if (!empty($prefix) && !str_starts_with($databaseName, $prefix)) {
+                $databaseName = $this->getFullDatabaseName($databaseName);
+            }
+
             $result = DB::connection('mysql')->select(
                 "SELECT SCHEMA_NAME FROM INFORMATION_SCHEMA.SCHEMATA WHERE SCHEMA_NAME = ?",
                 [$databaseName]
@@ -170,9 +195,16 @@ class TenantDatabaseService
     
     /**
      * Create database connection for tenant
+     * @param string $databaseName - Can be base name (without prefix) or full name (with prefix)
      */
     public function createDatabaseConnection(string $databaseName): void
     {
+        // If database name doesn't start with prefix, add it
+        $prefix = $this->getDatabasePrefix();
+        if (!empty($prefix) && !str_starts_with($databaseName, $prefix)) {
+            $databaseName = $this->getFullDatabaseName($databaseName);
+        }
+
         Config::set('database.connections.tenant.database', $databaseName);
         DB::purge('tenant');
         DB::connection('tenant')->reconnect();

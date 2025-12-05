@@ -8,14 +8,17 @@ use App\Models\Tenant\MortgageRepayment;
 use App\Models\Tenant\InternalMortgagePlan;
 use App\Models\Tenant\InternalMortgageRepayment;
 use App\Models\Tenant\Member;
+use App\Traits\HandlesBulkFileUpload;
 use Illuminate\Http\JsonResponse;
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\DB;
+use Illuminate\Support\Facades\Log;
 use Illuminate\Support\Facades\Validator;
 use Illuminate\Support\Str;
 
 class BulkMortgageRepaymentController extends Controller
 {
+    use HandlesBulkFileUpload;
     /**
      * Download CSV template for bulk mortgage repayment upload
      */
@@ -23,7 +26,7 @@ class BulkMortgageRepaymentController extends Controller
     {
         $template = [
             'Mortgage ID',
-            'Member ID (UUID or Staff ID)',
+            'Member ID (UUID, Staff ID, or IPPIS)',
             'Member Name',
             'Amount',
             'Principal Paid',
@@ -66,7 +69,7 @@ class BulkMortgageRepaymentController extends Controller
     {
         $template = [
             'Internal Mortgage Plan ID',
-            'Member ID (UUID or Staff ID)',
+            'Member ID (UUID, Staff ID, or IPPIS)',
             'Member Name',
             'Amount',
             'Principal Paid',
@@ -107,66 +110,74 @@ class BulkMortgageRepaymentController extends Controller
      */
     public function uploadBulk(Request $request): JsonResponse
     {
-        $validator = Validator::make($request->all(), [
-            'file' => 'required|file|mimes:csv,txt,xlsx,xls|max:5120',
-        ]);
-
-        if ($validator->fails()) {
-            return response()->json([
-                'success' => false,
-                'message' => 'Validation failed',
-                'errors' => $validator->errors()
-            ], 422);
-        }
-
-        $file = $request->file('file');
-        $handle = fopen($file->getPathname(), 'r');
-        
-        if (!$handle) {
-            return response()->json([
-                'success' => false,
-                'message' => 'Could not open file'
-            ], 422);
-        }
-
-        $headers = fgetcsv($handle);
-        $successful = 0;
-        $failed = 0;
-        $errors = [];
-        $user = $request->user();
-
-        $lineNumber = 1;
-        
         try {
+            $validator = Validator::make($request->all(), [
+                'file' => 'required|file|mimes:csv,txt,xlsx,xls|max:5120',
+            ]);
+
+            if ($validator->fails()) {
+                return response()->json([
+                    'success' => false,
+                    'message' => 'File validation failed',
+                    'errors' => $validator->errors()->all(),
+                    'error_type' => 'file_validation'
+                ], 422);
+            }
+
+            $file = $request->file('file');
+            
+            if (!$file || !$file->isValid()) {
+                return response()->json([
+                    'success' => false,
+                    'message' => 'Invalid or corrupted file',
+                    'errors' => ['The uploaded file is invalid or corrupted. Please check the file and try again.'],
+                    'error_type' => 'file_invalid'
+                ], 422);
+            }
+
+            $parsedResult = $this->parseFile($file);
+            
+            if (!$parsedResult['success']) {
+                return response()->json([
+                    'success' => false,
+                    'message' => 'Failed to parse file',
+                    'errors' => $parsedResult['errors'] ?? ['Unable to parse the file. Please check the file format.'],
+                    'error_type' => 'parsing_error'
+                ], 422);
+            }
+
+            $rows = $parsedResult['data'];
+            
+            if (empty($rows)) {
+                return response()->json([
+                    'success' => false,
+                    'message' => 'No mortgage repayment data found in file',
+                    'errors' => ['The file appears to be empty or contains no valid mortgage repayment data.'],
+                    'error_type' => 'empty_data'
+                ], 422);
+            }
+
+            $successful = 0;
+            $failed = 0;
+            $errors = $parsedResult['errors'] ?? [];
+            $user = $request->user();
+            
             DB::beginTransaction();
 
-            while (($row = fgetcsv($handle)) !== false) {
-                $lineNumber++;
-                
-                if (count($row) !== count($headers)) {
-                    $errors[] = "Line {$lineNumber}: Invalid number of columns";
-                    $failed++;
-                    continue;
-                }
-
-                $data = array_combine($headers, $row);
-                $data = array_map('trim', $data);
-
-                // Skip empty rows
-                if (empty(array_filter($data))) {
-                    continue;
-                }
+            foreach ($rows as $index => $data) {
+                $lineNumber = $index + 2; // +2 because line 1 is header
 
                 try {
-                    $mortgageId = $data['Mortgage ID'] ?? null;
-                    $memberId = $data['Member ID (UUID or Staff ID)'] ?? null;
-                    $amount = floatval($data['Amount'] ?? 0);
-                    $principalPaid = floatval($data['Principal Paid'] ?? 0);
-                    $interestPaid = floatval($data['Interest Paid'] ?? 0);
-                    $paymentDate = $data['Payment Date (YYYY-MM-DD)'] ?? now()->format('Y-m-d');
-                    $paymentMethod = $data['Payment Method (monthly/yearly/bi-yearly)'] ?? 'monthly';
-                    $reference = $data['Transaction Reference'] ?? 'BULK-MORT-' . time() . '-' . rand(1000, 9999);
-                    $notes = $data['Notes'] ?? null;
+                    // Handle different header formats
+                    $mortgageId = $data['Mortgage ID'] ?? $data['mortgage_id'] ?? null;
+                    $memberId = $data['Member ID (UUID, Staff ID, or IPPIS)'] ?? $data['Member ID (UUID or Staff ID)'] ?? $data['Member ID'] ?? $data['member_id'] ?? null;
+                    $amount = floatval($data['Amount'] ?? $data['amount'] ?? 0);
+                    $principalPaid = floatval($data['Principal Paid'] ?? $data['principal_paid'] ?? 0);
+                    $interestPaid = floatval($data['Interest Paid'] ?? $data['interest_paid'] ?? 0);
+                    $paymentDate = $data['Payment Date (YYYY-MM-DD)'] ?? $data['Payment Date'] ?? $data['payment_date'] ?? now()->format('Y-m-d');
+                    $paymentMethod = $data['Payment Method (monthly/yearly/bi-yearly)'] ?? $data['Payment Method'] ?? $data['payment_method'] ?? 'monthly';
+                    $reference = $data['Transaction Reference'] ?? $data['Transaction Ref'] ?? $data['transaction_ref'] ?? 'BULK-MORT-' . time() . '-' . rand(1000, 9999);
+                    $notes = $data['Notes'] ?? $data['notes'] ?? null;
 
                     // Validate required fields
                     if (!$mortgageId || !$memberId || $amount <= 0) {
@@ -186,10 +197,11 @@ class BulkMortgageRepaymentController extends Controller
                     $member = Member::where('id', $memberId)
                         ->orWhere('member_number', $memberId)
                         ->orWhere('staff_id', $memberId)
+                        ->orWhere('ippis_number', $memberId)
                         ->first();
 
                     if (!$member) {
-                        $errors[] = "Line {$lineNumber}: Member not found ({$memberId})";
+                        $errors[] = "Line {$lineNumber}: Member not found ({$memberId}). Please use Member Number, Staff ID, IPPIS Number, or Member UUID.";
                         $failed++;
                         continue;
                     }
@@ -284,7 +296,7 @@ class BulkMortgageRepaymentController extends Controller
                 'success' => false,
                 'message' => 'Bulk upload failed: ' . $e->getMessage(),
                 'data' => [
-                    'total' => $lineNumber - 1,
+                    'total' => count($rows),
                     'successful' => $successful,
                     'failed' => $failed,
                     'errors' => array_slice($errors, 0, 50),
@@ -292,13 +304,11 @@ class BulkMortgageRepaymentController extends Controller
             ], 500);
         }
 
-        fclose($handle);
-
         return response()->json([
             'success' => true,
             'message' => 'Bulk mortgage repayments processed successfully',
             'data' => [
-                'total' => $lineNumber - 1,
+                'total' => count($rows),
                 'successful' => $successful,
                 'failed' => $failed,
                 'errors' => array_slice($errors, 0, 50),
@@ -324,53 +334,39 @@ class BulkMortgageRepaymentController extends Controller
         }
 
         $file = $request->file('file');
-        $handle = fopen($file->getPathname(), 'r');
+        $parsedResult = $this->parseFile($file);
         
-        if (!$handle) {
+        if (!$parsedResult['success']) {
             return response()->json([
                 'success' => false,
-                'message' => 'Could not open file'
+                'message' => 'Failed to parse file',
+                'errors' => $parsedResult['errors']
             ], 422);
         }
 
-        $headers = fgetcsv($handle);
+        $rows = $parsedResult['data'];
         $successful = 0;
         $failed = 0;
-        $errors = [];
+        $errors = $parsedResult['errors'] ?? [];
         $user = $request->user();
-
-        $lineNumber = 1;
         
         try {
             DB::beginTransaction();
 
-            while (($row = fgetcsv($handle)) !== false) {
-                $lineNumber++;
-                
-                if (count($row) !== count($headers)) {
-                    $errors[] = "Line {$lineNumber}: Invalid number of columns";
-                    $failed++;
-                    continue;
-                }
-
-                $data = array_combine($headers, $row);
-                $data = array_map('trim', $data);
-
-                // Skip empty rows
-                if (empty(array_filter($data))) {
-                    continue;
-                }
+            foreach ($rows as $index => $data) {
+                $lineNumber = $index + 2; // +2 because line 1 is header
 
                 try {
-                    $planId = $data['Internal Mortgage Plan ID'] ?? null;
-                    $memberId = $data['Member ID (UUID or Staff ID)'] ?? null;
-                    $amount = floatval($data['Amount'] ?? 0);
-                    $principalPaid = floatval($data['Principal Paid'] ?? 0);
-                    $interestPaid = floatval($data['Interest Paid'] ?? 0);
-                    $paymentDate = $data['Payment Date (YYYY-MM-DD)'] ?? now()->format('Y-m-d');
-                    $paymentMethod = $data['Payment Method (monthly/yearly/bi-yearly)'] ?? 'monthly';
-                    $reference = $data['Transaction Reference'] ?? 'BULK-INT-MORT-' . time() . '-' . rand(1000, 9999);
-                    $notes = $data['Notes'] ?? null;
+                    // Handle different header formats
+                    $planId = $data['Internal Mortgage Plan ID'] ?? $data['Plan ID'] ?? $data['plan_id'] ?? null;
+                    $memberId = $data['Member ID (UUID, Staff ID, or IPPIS)'] ?? $data['Member ID (UUID or Staff ID)'] ?? $data['Member ID'] ?? $data['member_id'] ?? null;
+                    $amount = floatval($data['Amount'] ?? $data['amount'] ?? 0);
+                    $principalPaid = floatval($data['Principal Paid'] ?? $data['principal_paid'] ?? 0);
+                    $interestPaid = floatval($data['Interest Paid'] ?? $data['interest_paid'] ?? 0);
+                    $paymentDate = $data['Payment Date (YYYY-MM-DD)'] ?? $data['Payment Date'] ?? $data['payment_date'] ?? now()->format('Y-m-d');
+                    $paymentMethod = $data['Payment Method (monthly/yearly/bi-yearly)'] ?? $data['Payment Method'] ?? $data['payment_method'] ?? 'monthly';
+                    $reference = $data['Transaction Reference'] ?? $data['Transaction Ref'] ?? $data['transaction_ref'] ?? 'BULK-INT-MORT-' . time() . '-' . rand(1000, 9999);
+                    $notes = $data['Notes'] ?? $data['notes'] ?? null;
 
                     // Validate required fields
                     if (!$planId || !$memberId || $amount <= 0) {
@@ -390,10 +386,11 @@ class BulkMortgageRepaymentController extends Controller
                     $member = Member::where('id', $memberId)
                         ->orWhere('member_number', $memberId)
                         ->orWhere('staff_id', $memberId)
+                        ->orWhere('ippis_number', $memberId)
                         ->first();
 
                     if (!$member) {
-                        $errors[] = "Line {$lineNumber}: Member not found ({$memberId})";
+                        $errors[] = "Line {$lineNumber}: Member not found ({$memberId}). Please use Member Number, Staff ID, IPPIS Number, or Member UUID.";
                         $failed++;
                         continue;
                     }
@@ -474,40 +471,98 @@ class BulkMortgageRepaymentController extends Controller
                     }
 
                     $successful++;
-                } catch (\Exception $e) {
-                    $errors[] = "Line {$lineNumber}: " . $e->getMessage();
+                } catch (\Illuminate\Database\QueryException $e) {
+                    DB::rollBack();
+                    $errorCode = $e->getCode();
+                    $mortgageId = $mortgageId ?? 'unknown';
+                    
+                    if ($errorCode == 23000) {
+                        $errors[] = "Row {$lineNumber} (Mortgage: {$mortgageId}): Database constraint violation - " . $e->getMessage();
+                    } else {
+                        $errors[] = "Row {$lineNumber} (Mortgage: {$mortgageId}): Database error - " . $e->getMessage();
+                    }
                     $failed++;
+                    Log::error("Bulk mortgage repayment upload - Row {$lineNumber} database error", [
+                        'error' => $e->getMessage(),
+                        'data' => $data
+                    ]);
+                    DB::beginTransaction(); // Restart transaction for next row
+                } catch (\Exception $e) {
+                    $errors[] = "Row {$lineNumber}: " . $e->getMessage();
+                    $failed++;
+                    Log::error("Bulk mortgage repayment upload - Row {$lineNumber} error", [
+                        'error' => $e->getMessage(),
+                        'data' => $data
+                    ]);
                 }
             }
 
             DB::commit();
+            
+            // Check if all records failed
+            if ($successful === 0 && $failed > 0) {
+                return response()->json([
+                    'success' => false,
+                    'message' => 'All mortgage repayment records failed to process',
+                    'errors' => $errors,
+                    'error_type' => 'processing_error',
+                    'data' => [
+                        'total' => count($rows),
+                        'successful' => $successful,
+                        'failed' => $failed,
+                        'errors' => $errors,
+                    ]
+                ], 422);
+            }
+
+            // Partial success - some records succeeded, some failed
+            if ($failed > 0) {
+                return response()->json([
+                    'success' => true,
+                    'message' => "Bulk upload completed with errors. {$successful} successful, {$failed} failed.",
+                    'data' => [
+                        'total' => count($rows),
+                        'successful' => $successful,
+                        'failed' => $failed,
+                        'errors' => $errors,
+                    ],
+                    'has_errors' => true
+                ], 200);
+            }
+
+            return response()->json([
+                'success' => true,
+                'message' => "Bulk upload processed successfully. {$successful} successful.",
+                'data' => [
+                    'total' => count($rows),
+                    'successful' => $successful,
+                    'failed' => $failed,
+                    'errors' => [],
+                ]
+            ]);
+
         } catch (\Exception $e) {
             DB::rollBack();
             
+            Log::error('Bulk mortgage repayment upload error: ' . $e->getMessage(), [
+                'trace' => $e->getTraceAsString(),
+                'file' => $e->getFile(),
+                'line' => $e->getLine()
+            ]);
+            
             return response()->json([
                 'success' => false,
-                'message' => 'Bulk upload failed: ' . $e->getMessage(),
+                'message' => 'An unexpected error occurred during bulk upload',
+                'errors' => ['Server error: ' . $e->getMessage()],
+                'error_type' => 'server_error',
                 'data' => [
-                    'total' => $lineNumber - 1,
-                    'successful' => $successful,
-                    'failed' => $failed,
-                    'errors' => array_slice($errors, 0, 50),
+                    'total' => isset($rows) ? count($rows) : 0,
+                    'successful' => isset($successful) ? $successful : 0,
+                    'failed' => isset($failed) ? $failed : 0,
+                    'errors' => isset($errors) ? $errors : [],
                 ]
             ], 500);
         }
-
-        fclose($handle);
-
-        return response()->json([
-            'success' => true,
-            'message' => 'Bulk internal mortgage repayments processed successfully',
-            'data' => [
-                'total' => $lineNumber - 1,
-                'successful' => $successful,
-                'failed' => $failed,
-                'errors' => array_slice($errors, 0, 50),
-            ]
-        ]);
     }
 
     /**

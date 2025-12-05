@@ -132,7 +132,7 @@ class InternalMortgagePlanController extends Controller
             ], 404);
         }
 
-        $plan->load(['property', 'member.user', 'configuredBy']);
+        $plan->load(['property', 'member.user', 'configuredBy', 'repayments']);
 
         return response()->json([
             'success' => true,

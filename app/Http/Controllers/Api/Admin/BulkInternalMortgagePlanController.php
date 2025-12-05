@@ -3,22 +3,23 @@
 namespace App\Http\Controllers\Api\Admin;
 
 use App\Http\Controllers\Controller;
-use App\Models\Tenant\EquityTransaction;
+use App\Models\Tenant\InternalMortgagePlan;
 use App\Models\Tenant\Member;
-use App\Models\Tenant\Refund;
-use App\Models\Tenant\Wallet;
-use App\Models\Tenant\WalletTransaction;
+use App\Models\Tenant\Property;
 use App\Traits\HandlesBulkFileUpload;
 use Illuminate\Http\JsonResponse;
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Log;
 use Illuminate\Support\Facades\Validator;
-use Illuminate\Support\Str;
 
-class BulkRefundController extends Controller
+class BulkInternalMortgagePlanController extends Controller
 {
     use HandlesBulkFileUpload;
+
+    /**
+     * Download CSV template for bulk internal mortgage plan upload
+     */
     public function downloadTemplate(): JsonResponse
     {
         // Helper function to escape CSV values
@@ -32,26 +33,44 @@ class BulkRefundController extends Controller
 
         $headers = [
             'Member ID (UUID, Staff ID, or IPPIS)',
-            'Amount',
-            'Source (contribution/investment_return/investment/equity_wallet)',
-            'Reason',
+            'Property ID (UUID)',
+            'Title',
+            'Description',
+            'Principal Amount',
+            'Interest Rate (%)',
+            'Tenure (Years)',
+            'Frequency (monthly/quarterly/biannually/annually)',
+            'Start Date (YYYY-MM-DD)',
+            'Status (draft/active/completed/cancelled)',
             'Notes'
         ];
 
         $sampleData = [
             [
                 'FRSC/HMS/2024/001',
-                '50000',
-                'contribution',
-                'Refund for overpayment',
-                'Overpayment refund processed'
+                'PROP-UUID-123',
+                'Property Purchase Mortgage Plan',
+                'Internal mortgage plan for property acquisition',
+                '5000000',
+                '6.5',
+                '20',
+                'monthly',
+                '2025-01-01',
+                'draft',
+                'Initial mortgage plan setup'
             ],
             [
                 'FRSC/HMS/2024/002',
-                '75000',
-                'investment_return',
-                'Early withdrawal refund',
-                'Investment return processed'
+                'PROP-UUID-456',
+                'Property Development Mortgage',
+                'Mortgage for property development project',
+                '10000000',
+                '7.0',
+                '15',
+                'monthly',
+                '2025-02-01',
+                'draft',
+                'Development project financing'
             ],
         ];
 
@@ -63,10 +82,13 @@ class BulkRefundController extends Controller
         return response()->json([
             'success' => true,
             'template' => $csvContent,
-            'filename' => 'refunds_upload_template.csv'
+            'filename' => 'internal_mortgage_plans_upload_template.csv'
         ]);
     }
 
+    /**
+     * Upload and process bulk internal mortgage plans from CSV/Excel
+     */
     public function uploadBulk(Request $request): JsonResponse
     {
         try {
@@ -120,8 +142,8 @@ class BulkRefundController extends Controller
             if (empty($rows)) {
                 return response()->json([
                     'success' => false,
-                    'message' => 'No refund data found in file',
-                    'errors' => ['The file appears to be empty or contains no valid refund data.'],
+                    'message' => 'No internal mortgage plan data found in file',
+                    'errors' => ['The file appears to be empty or contains no valid internal mortgage plan data.'],
                     'error_type' => 'empty_data'
                 ], 422);
             }
@@ -188,22 +210,75 @@ class BulkRefundController extends Controller
                         'staff_id'
                     ]);
                     
-                    $amount = $findValue([
+                    $propertyId = $findValue([
+                        'Property ID (UUID)',
+                        'property_id_uuid',
+                        'Property ID',
+                        'property_id',
+                        'PropertyID',
+                        'PropertyId'
+                    ]);
+                    
+                    $title = $findValue([
+                        'Title',
+                        'title'
+                    ]);
+                    
+                    $description = $findValue([
+                        'Description',
+                        'description'
+                    ]);
+                    
+                    $principal = $findValue([
+                        'Principal Amount',
+                        'principal_amount',
+                        'Principal',
+                        'principal',
                         'Amount',
                         'amount'
                     ]);
                     
-                    $source = $findValue([
-                        'Source (contribution/investment_return/investment/equity_wallet)',
-                        'source_contribution_investment_return_investment_equity_wallet',
-                        'Source',
-                        'source'
-                    ], 'contribution');
-                    
-                    $reason = $findValue([
-                        'Reason',
-                        'reason'
+                    $interestRate = $findValue([
+                        'Interest Rate (%)',
+                        'interest_rate_percent',
+                        'Interest Rate',
+                        'interest_rate',
+                        'InterestRate',
+                        'Rate',
+                        'rate'
                     ]);
+                    
+                    $tenureYears = $findValue([
+                        'Tenure (Years)',
+                        'tenure_years',
+                        'Tenure',
+                        'tenure',
+                        'TenureYears',
+                        'Years',
+                        'years'
+                    ]);
+                    
+                    $frequency = $findValue([
+                        'Frequency (monthly/quarterly/biannually/annually)',
+                        'frequency_monthly_quarterly_biannually_annually',
+                        'Frequency',
+                        'frequency'
+                    ], 'monthly');
+                    
+                    $startDate = $findValue([
+                        'Start Date (YYYY-MM-DD)',
+                        'start_date_yyyy_mm_dd',
+                        'Start Date',
+                        'start_date',
+                        'StartDate'
+                    ]);
+                    
+                    $status = $findValue([
+                        'Status (draft/active/completed/cancelled)',
+                        'status_draft_active_completed_cancelled',
+                        'Status',
+                        'status'
+                    ], 'draft');
                     
                     $notes = $findValue([
                         'Notes',
@@ -218,32 +293,64 @@ class BulkRefundController extends Controller
                         continue;
                     }
 
-                    if (empty($amount) || !is_numeric($amount) || floatval($amount) <= 0) {
-                        $errors[] = "Row {$lineNumber}: Amount is required and must be greater than 0";
+                    if (empty($title)) {
+                        $errors[] = "Row {$lineNumber}: Title is required";
                         $failed++;
                         continue;
                     }
 
-                    if (empty($source)) {
-                        $availableKeys = implode(', ', array_keys($data));
-                        $errors[] = "Row {$lineNumber}: Source is required. Available columns: {$availableKeys}";
+                    if (empty($principal) || !is_numeric($principal) || floatval($principal) <= 0) {
+                        $errors[] = "Row {$lineNumber}: Principal Amount is required and must be greater than 0";
                         $failed++;
                         continue;
                     }
 
-                    // Validate source value
-                    $validSources = ['contribution', 'investment_return', 'investment', 'equity_wallet'];
-                    if (!in_array(strtolower($source), $validSources)) {
-                        $errors[] = "Row {$lineNumber}: Invalid source '{$source}'. Must be one of: " . implode(', ', $validSources);
+                    if (empty($interestRate) || !is_numeric($interestRate)) {
+                        $errors[] = "Row {$lineNumber}: Interest Rate is required and must be a valid number";
                         $failed++;
                         continue;
                     }
 
-                    $amount = floatval($amount);
-                    $source = strtolower($source);
+                    $interestRate = floatval($interestRate);
+                    if ($interestRate < 0 || $interestRate > 100) {
+                        $errors[] = "Row {$lineNumber}: Interest Rate must be between 0 and 100";
+                        $failed++;
+                        continue;
+                    }
+
+                    if (empty($tenureYears) || !is_numeric($tenureYears) || intval($tenureYears) <= 0) {
+                        $errors[] = "Row {$lineNumber}: Tenure is required and must be greater than 0";
+                        $failed++;
+                        continue;
+                    }
+
+                    $tenureYears = intval($tenureYears);
+                    if ($tenureYears > 35) {
+                        $errors[] = "Row {$lineNumber}: Tenure cannot exceed 35 years";
+                        $failed++;
+                        continue;
+                    }
+
+                    // Validate frequency
+                    $validFrequencies = ['monthly', 'quarterly', 'biannually', 'annually'];
+                    $frequency = strtolower($frequency);
+                    if (!in_array($frequency, $validFrequencies)) {
+                        $errors[] = "Row {$lineNumber}: Invalid frequency '{$frequency}'. Must be one of: " . implode(', ', $validFrequencies);
+                        $failed++;
+                        continue;
+                    }
+
+                    // Validate status
+                    $validStatuses = ['draft', 'active', 'completed', 'cancelled'];
+                    $status = strtolower($status);
+                    if (!in_array($status, $validStatuses)) {
+                        $errors[] = "Row {$lineNumber}: Invalid status '{$status}'. Must be one of: " . implode(', ', $validStatuses);
+                        $failed++;
+                        continue;
+                    }
 
                     // Find member
-                    $member = Member::with('user.wallet')->where('id', $memberId)
+                    $member = Member::where('id', $memberId)
                         ->orWhere('member_number', $memberId)
                         ->orWhere('staff_id', $memberId)
                         ->orWhere('ippis_number', $memberId)
@@ -255,123 +362,76 @@ class BulkRefundController extends Controller
                         continue;
                     }
 
-                    if (!$member->user) {
-                        $errors[] = "Row {$lineNumber}: Member '{$memberId}' does not have a user account";
-                        $failed++;
-                        continue;
-                    }
-
-                    // Handle different sources
-                    $wallet = null;
-                    $equityWallet = null;
-                    $equityTransaction = null;
-
-                    if ($source === 'equity_wallet') {
-                        // For equity_wallet refunds, check equity wallet balance
-                        $equityWallet = $member->equityWalletBalance;
-                        if (!$equityWallet || $equityWallet->balance < $amount) {
-                            $equityBalance = $equityWallet ? $equityWallet->balance : 0;
-                            $errors[] = "Row {$lineNumber}: Insufficient equity wallet balance. Available: ₦" . number_format($equityBalance, 2) . ", Required: ₦" . number_format($amount, 2);
-                            $failed++;
-                            continue;
-                        }
-                    } else {
-                        // For other sources, ensure wallet exists and check balance
-                        $wallet = $member->user->wallet ?? Wallet::create(['user_id' => $member->user_id, 'balance' => 0]);
-
-                        // Check wallet balance (all refunds except equity_wallet are paid from wallet)
-                        // Note: For contribution/investment_return sources, the Refund record tracks
-                        // how much was refunded from those sources, but the actual payment comes from wallet
-                        if ($wallet->balance < $amount) {
-                            $errors[] = "Row {$lineNumber}: Insufficient wallet balance. Available: ₦" . number_format($wallet->balance, 2) . ", Required: ₦" . number_format($amount, 2) . ". Source: {$source}";
+                    // Find property if provided
+                    $property = null;
+                    if (!empty($propertyId)) {
+                        $property = Property::find($propertyId);
+                        if (!$property) {
+                            $errors[] = "Row {$lineNumber}: Property ID '{$propertyId}' not found";
                             $failed++;
                             continue;
                         }
                     }
 
-                    // Generate reference
-                    $reference = 'REF-' . strtoupper(Str::random(10));
+                    // Calculate mortgage plan details
+                    $principal = floatval($principal);
+                    $tenureMonths = $tenureYears * 12;
+                    
+                    // Calculate monthly payment using amortization formula
+                    $periodsPerYear = match ($frequency) {
+                        'monthly' => 12,
+                        'quarterly' => 4,
+                        'biannually' => 2,
+                        'annually' => 1,
+                        default => 12,
+                    };
 
-                    // Create Refund record first
-                    $refund = Refund::create([
+                    $numberOfPayments = $tenureMonths;
+                    $monthlyRate = $interestRate > 0 ? ($interestRate / 100) / 12 : 0;
+
+                    $monthlyPayment = null;
+                    if ($monthlyRate > 0 && $numberOfPayments > 0) {
+                        $factor = pow(1 + $monthlyRate, $numberOfPayments);
+                        if ($factor === 1.0) {
+                            $monthlyPayment = $principal / $numberOfPayments;
+                        } else {
+                            $monthlyPayment = $principal * ($monthlyRate * $factor) / ($factor - 1);
+                        }
+                    } elseif ($numberOfPayments > 0) {
+                        $monthlyPayment = $principal / $numberOfPayments;
+                    }
+
+                    // Parse start date if provided
+                    $startsOn = null;
+                    $endsOn = null;
+                    if (!empty($startDate)) {
+                        try {
+                            $startsOn = \Carbon\Carbon::parse($startDate);
+                            $endsOn = $startsOn->copy()->addYears($tenureYears);
+                        } catch (\Exception $e) {
+                            $errors[] = "Row {$lineNumber}: Invalid start date format '{$startDate}'. Expected format: YYYY-MM-DD";
+                            $failed++;
+                            continue;
+                        }
+                    }
+
+                    // Create internal mortgage plan
+                    InternalMortgagePlan::create([
+                        'property_id' => $property?->id,
                         'member_id' => $member->id,
-                        'request_type' => 'refund',
-                        'status' => 'completed', // Bulk uploads are processed immediately
-                        'source' => $source,
-                        'amount' => $amount,
-                        'reason' => $reason,
-                        'notes' => $notes,
-                        'processed_by' => $user->id,
-                        'approved_by' => $user->id,
-                        'approved_at' => now(),
-                        'processed_at' => now(),
-                        'completed_at' => now(),
-                        'reference' => $reference,
-                        'metadata' => [
-                            'bulk_upload' => true,
-                            'processed_at' => now()->toIso8601String(),
-                        ],
-                    ]);
-
-                    // Process refund based on source
-                    $walletTransaction = null;
-
-                    if ($source === 'equity_wallet') {
-                        // Process equity wallet refund
-                        $balanceBefore = (float) $equityWallet->balance;
-                        $equityWallet->decrement('balance', $amount);
-                        $equityWallet->increment('total_used', $amount);
-                        $equityWallet->last_updated_at = now();
-                        $equityWallet->save();
-
-                        $equityTransaction = EquityTransaction::create([
-                            'member_id' => $member->id,
-                            'equity_wallet_balance_id' => $equityWallet->id,
-                            'type' => 'refund',
-                            'amount' => $amount,
-                            'balance_before' => $balanceBefore,
-                            'balance_after' => (float) $equityWallet->fresh()->balance,
-                            'reference' => $reference,
-                            'reference_type' => 'refund',
-                            'description' => "Refund processed from equity wallet ({$reason})",
-                            'notes' => $notes,
-                            'metadata' => [
-                                'processed_by' => $user->id,
-                                'bulk_upload' => true,
-                            ],
-                        ]);
-                    } else {
-                        // Process wallet transaction (debit from wallet for payout)
-                        // Note: For contribution/investment_return sources, the money still comes from wallet
-                        // but we track it as refunded from those sources
-                        $wallet->decrement('balance', $amount);
-
-                        // Create wallet transaction record
-                        $walletTransaction = WalletTransaction::create([
-                            'wallet_id' => $wallet->id,
-                            'type' => 'debit',
-                            'amount' => $amount,
-                            'description' => "Refund payout: {$reason} ({$source})",
-                            'payment_reference' => $reference,
-                            'status' => 'completed',
-                            'balance_after' => (float) $wallet->fresh()->balance,
-                            'metadata' => [
-                                'refund_id' => $refund->id,
-                                'source' => $source,
-                                'reason' => $reason,
-                                'notes' => $notes,
-                                'processed_by' => $user->id,
-                                'bulk_upload' => true,
-                            ],
-                        ]);
-                    }
-
-                    // Update refund metadata with transaction IDs
-                    $refund->update([
-                        'metadata' => array_merge($refund->metadata ?? [], [
-                            'wallet_transaction_id' => $walletTransaction?->id,
-                            'equity_transaction_id' => $equityTransaction?->id,
-                        ]),
+                        'configured_by' => $user->id,
+                        'title' => $title,
+                        'description' => !empty($description) ? $description : null,
+                        'principal' => $principal,
+                        'interest_rate' => $interestRate,
+                        'tenure_months' => $tenureMonths,
+                        'monthly_payment' => $monthlyPayment,
+                        'frequency' => $frequency,
+                        'status' => $status,
+                        'starts_on' => $startsOn,
+                        'ends_on' => $endsOn,
+                        'schedule' => null,
+                        'metadata' => !empty($notes) ? ['notes' => $notes, 'bulk_upload' => true] : ['bulk_upload' => true],
                     ]);
 
                     $successful++;
@@ -386,13 +446,13 @@ class BulkRefundController extends Controller
                         $errors[] = "Row {$lineNumber} (Member: {$memberId}): Database error - " . $e->getMessage();
                     }
                     $failed++;
-                    Log::error("Bulk refund upload - Row {$lineNumber} database error", [
+                    Log::error("Bulk internal mortgage plan upload - Row {$lineNumber} database error", [
                         'error' => $e->getMessage(),
                         'data' => $data
                     ]);
                     DB::beginTransaction(); // Restart transaction for next row
                 } catch (\Exception $e) {
-                    Log::error("BulkRefundController error on row {$lineNumber}: " . $e->getMessage(), [
+                    Log::error("BulkInternalMortgagePlanController error on row {$lineNumber}: " . $e->getMessage(), [
                         'trace' => $e->getTraceAsString(),
                         'data' => $data
                     ]);
@@ -407,7 +467,7 @@ class BulkRefundController extends Controller
             if ($successful === 0 && $failed > 0) {
                 return response()->json([
                     'success' => false,
-                    'message' => 'All refund records failed to process',
+                    'message' => 'All internal mortgage plan records failed to process',
                     'errors' => $errors,
                     'error_type' => 'processing_error',
                     'data' => [
@@ -448,7 +508,7 @@ class BulkRefundController extends Controller
         } catch (\Exception $e) {
             DB::rollBack();
             
-            Log::error('Bulk refund upload error: ' . $e->getMessage(), [
+            Log::error('Bulk internal mortgage plan upload error: ' . $e->getMessage(), [
                 'trace' => $e->getTraceAsString(),
                 'file' => $e->getFile(),
                 'line' => $e->getLine()
@@ -469,5 +529,4 @@ class BulkRefundController extends Controller
         }
     }
 }
-
 

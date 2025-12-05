@@ -2,6 +2,7 @@
 
 namespace App\Http\Requests\Auth;
 
+use App\Services\RecaptchaService;
 use Illuminate\Foundation\Http\FormRequest;
 
 class RegisterRequest extends FormRequest
@@ -22,6 +23,7 @@ class RegisterRequest extends FormRequest
     public function rules(): array
     {
         return [
+            'recaptcha_token' => ['required', 'string'],
             // Personal Information
             'first_name' => ['required', 'string', 'max:255'],
             'last_name' => ['required', 'string', 'max:255'],
@@ -65,5 +67,21 @@ class RegisterRequest extends FormRequest
             'command_state' => ['nullable', 'string', 'max:255'],
             'employment_date' => ['nullable', 'date'],
         ];
+    }
+
+    /**
+     * Configure the validator instance.
+     */
+    public function withValidator($validator): void
+    {
+        $validator->after(function ($validator) {
+            $recaptchaService = app(RecaptchaService::class);
+            $token = $this->input('recaptcha_token');
+            $remoteIp = $this->ip();
+
+            if (!$recaptchaService->verify($token, $remoteIp)) {
+                $validator->errors()->add('recaptcha_token', 'reCAPTCHA verification failed. Please try again.');
+            }
+        });
     }
 }

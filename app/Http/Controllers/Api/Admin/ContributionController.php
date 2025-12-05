@@ -22,7 +22,7 @@ class ContributionController extends Controller
         }
 
         try {
-            $query = Contribution::with(['member.user']);
+            $query = Contribution::with(['member.user', 'payments']);
 
             if ($request->has('search') && !empty($request->search)) {
                 $search = $request->search;
@@ -47,9 +47,25 @@ class ContributionController extends Controller
                 ->orderByDesc('created_at')
                 ->paginate($request->get('per_page', 15));
 
+            // Add payment_method to each contribution from the first payment
+            $contributionsData = collect($contributions->items())->map(function ($contribution) {
+                // Get payment_method from the first payment if available
+                $paymentMethod = null;
+                if ($contribution->relationLoaded('payments') && $contribution->payments && $contribution->payments->isNotEmpty()) {
+                    $paymentMethod = $contribution->payments->first()->payment_method;
+                }
+                
+                // Convert to array and add payment_method
+                $data = $contribution->toArray();
+                if ($paymentMethod) {
+                    $data['payment_method'] = $paymentMethod;
+                }
+                return $data;
+            })->all();
+
             return response()->json([
                 'success' => true,
-                'data' => $contributions->items(),
+                'data' => $contributionsData,
                 'pagination' => [
                     'current_page' => $contributions->currentPage(),
                     'last_page' => $contributions->lastPage(),
@@ -81,7 +97,7 @@ class ContributionController extends Controller
             return response()->json(['message' => 'Unauthenticated'], 401);
         }
 
-        $contribution = Contribution::with(['member.user'])->findOrFail($id);
+        $contribution = Contribution::with(['member.user', 'payments'])->findOrFail($id);
 
         return response()->json([
             'success' => true,

@@ -19,7 +19,8 @@ class DashboardService
      */
     public function getDashboardOverview(): array
     {
-        $cacheKey = 'dashboard_overview_' . date('Y-m-d-H');
+        // Cache for 5 minutes, but use a shorter key to allow faster updates
+        $cacheKey = 'dashboard_overview_' . date('Y-m-d-H-i');
         
         return Cache::remember($cacheKey, 300, function () {
             return [
@@ -104,17 +105,25 @@ class DashboardService
                 $subscription = Subscription::where('tenant_id', $tenant->id)->first();
                 $package = $subscription?->package;
                 
+                // Get business name exactly like BusinessResource does
+                // This matches the logic in BusinessResource::toArray() line 14
+                // BusinessResource uses: $this->data['name'] ?? $this->name ?? 'Unknown Business'
+                // Since Tenant model doesn't have a 'name' attribute, we only check data['name']
+                // Use the exact same null coalescing pattern as BusinessResource
+                $tenantData = $tenant->data ?? [];
+                $businessName = $tenantData['name'] ?? 'Unknown Business';
+                
                 return [
                     'id' => $tenant->id,
-                    'name' => $tenant->data['name'] ?? 'Unknown Business',
-                    'slug' => $tenant->id,
+                    'name' => $businessName,
+                    'slug' => $tenant->id, // Match BusinessResource which uses tenant->id as slug
                     'package' => $package?->name ?? 'No Package',
-                    'status' => $tenant->data['status'] ?? 'unknown',
+                    'status' => $tenantData['status'] ?? 'unknown',
                     'members' => $this->getTenantMemberCount($tenant->id),
                     'revenue' => $subscription?->amount ?? 0,
                     'joined_date' => $tenant->created_at->format('Y-m-d'),
-                    'logo_url' => $tenant->data['logo_url'] ?? null,
-                    'contact_email' => $tenant->data['contact_email'] ?? null
+                    'logo_url' => $tenantData['logo_url'] ?? null,
+                    'contact_email' => $tenantData['contact_email'] ?? null
                 ];
             })
             ->toArray();

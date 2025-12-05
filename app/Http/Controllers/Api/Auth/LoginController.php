@@ -586,8 +586,18 @@ class LoginController extends Controller
                         'tenant_id' => $tenantDetail->tenant_id,
                     ]);
                     
-                    $tenant = \App\Models\Central\Tenant::find($tenantDetail->tenant_id);
-                    if ($tenant) {
+                    // CRITICAL: Use DB facade directly to avoid Eloquent connection issues
+                    $tenantData = DB::connection('mysql')
+                        ->table('tenants')
+                        ->where('id', $tenantDetail->tenant_id)
+                        ->first();
+                    
+                    if ($tenantData) {
+                        // Create tenant model instance with explicit central connection
+                        $tenant = new \App\Models\Central\Tenant();
+                        $tenant->setConnection('mysql');
+                        $tenant->setRawAttributes((array) $tenantData, true);
+                        $tenant->exists = true;
                         return $tenant;
                     }
                 }
@@ -617,19 +627,32 @@ class LoginController extends Controller
             return null;
         }
 
-        $tenant = \App\Models\Central\Tenant::find($domain->tenant_id);
+        // CRITICAL: Use DB facade directly to avoid Eloquent connection issues
+        // The default connection might have been switched to 'tenant' by middleware
+        // Using DB facade ensures we always query the central database
+        $tenantData = DB::connection('mysql')
+            ->table('tenants')
+            ->where('id', $domain->tenant_id)
+            ->first();
         
-        if (!$tenant) {
+        if (!$tenantData) {
             Log::warning('[LOGIN] Tenant resolution failed - tenant not found', [
                 'domain_id' => $domain->id,
                 'tenant_id' => $domain->tenant_id,
             ]);
-        } else {
-            Log::debug('[LOGIN] Tenant resolved successfully', [
-                'tenant_id' => $tenant->id,
-                'domain' => $domain->domain,
-            ]);
+            return null;
         }
+        
+        // Create tenant model instance with explicit central connection
+        $tenant = new \App\Models\Central\Tenant();
+        $tenant->setConnection('mysql');
+        $tenant->setRawAttributes((array) $tenantData, true);
+        $tenant->exists = true;
+        
+        Log::debug('[LOGIN] Tenant resolved successfully', [
+            'tenant_id' => $tenant->id,
+            'domain' => $domain->domain,
+        ]);
 
         return $tenant;
     }
@@ -644,25 +667,88 @@ class LoginController extends Controller
         ]);
         
         try {
-            // Initialize tenant context for Stancl\Tenancy
-            \Stancl\Tenancy\Facades\Tenancy::initialize($tenant);
-            Log::debug('[LOGIN] Tenancy initialized', [
-                'tenant_id' => $tenant->id,
-            ]);
-
-            // Configure tenant database
-            $tenantDbName = $tenant->id . '_smart_housing';
+            // CRITICAL: Ensure tenant model uses central connection BEFORE anything else
+            // This prevents any lazy loading or relationship queries from using wrong database
+            $tenant->setConnection('mysql');
+            
+            // Store tenant ID to avoid any model reloading issues
+            $tenantId = $tenant->id;
+            
+            // Configure tenant database connection
+            // Get database prefix and suffix from environment/config
+            $dbPrefix = env('TENANCY_DB_PREFIX', config('tenancy.database.prefix', ''));
+            $dbSuffix = env('TENANCY_DB_SUFFIX', config('tenancy.database.suffix', '_smart_housing'));
+            $tenantDbName = $dbPrefix . $tenantId . $dbSuffix;
+            
+            // Store original default connection
+            $originalDefault = Config::get('database.default');
+            
+            // Ensure default connection is 'mysql' before configuring tenant connection
+            Config::set('database.default', 'mysql');
+            
+            // Configure tenant database connection
             DB::purge('tenant');
             Config::set('database.connections.tenant.database', $tenantDbName);
             DB::connection('tenant')->reconnect();
             
             Log::debug('[LOGIN] Tenant database connection configured', [
-                'tenant_id' => $tenant->id,
+                'tenant_id' => $tenantId,
                 'database' => $tenantDbName,
+                'prefix' => $dbPrefix,
+                'suffix' => $dbSuffix,
             ]);
+            
+            // Check if tenancy is already initialized by middleware
+            // If middleware already initialized it, we don't need to do it again
+            try {
+                $currentTenant = \Stancl\Tenancy\Facades\Tenancy::tenant();
+                if ($currentTenant && $currentTenant->id === $tenantId) {
+                    Log::debug('[LOGIN] Tenancy already initialized by middleware', [
+                        'tenant_id' => $tenantId,
+                    ]);
+                    // Just ensure tenant model connection is set correctly
+                    $tenant->setConnection('mysql');
+                    return;
+                }
+            } catch (\Exception $e) {
+                // Tenancy might not be initialized yet, continue
+                Log::debug('[LOGIN] Tenancy not initialized yet, will initialize now', [
+                    'tenant_id' => $tenantId,
+                ]);
+            }
+            
+            // Only initialize tenancy if not already done by middleware
+            // Load tenant data directly from DB to avoid Eloquent connection issues
+            $tenantData = DB::connection('mysql')
+                ->table('tenants')
+                ->where('id', $tenantId)
+                ->first();
+            
+            if (!$tenantData) {
+                throw new \Exception("Tenant not found: {$tenantId}");
+            }
+            
+            // Create fresh tenant model instance with explicit central connection
+            $freshTenant = new \App\Models\Central\Tenant();
+            $freshTenant->setConnection('mysql');
+            $freshTenant->setRawAttributes((array) $tenantData, true);
+            $freshTenant->exists = true;
+            
+            // Initialize tenant context for Stancl\Tenancy
+            // Use fresh tenant instance to avoid any connection issues
+            \Stancl\Tenancy\Facades\Tenancy::initialize($freshTenant);
+            
+            Log::debug('[LOGIN] Tenancy initialized successfully', [
+                'tenant_id' => $tenantId,
+            ]);
+            
+            // Ensure default connection remains 'mysql' after initialization
+            // Tenant operations should use 'tenant' connection explicitly
+            Config::set('database.default', 'mysql');
+            
         } catch (\Exception $e) {
             Log::error('[LOGIN] Failed to initialize tenant context', [
-                'tenant_id' => $tenant->id,
+                'tenant_id' => $tenant->id ?? 'unknown',
                 'error' => $e->getMessage(),
                 'trace' => $e->getTraceAsString(),
             ]);
@@ -817,9 +903,13 @@ class LoginController extends Controller
                 'tenant_count' => $tenants->count(),
             ]);
             
+            // Get database prefix and suffix from environment/config
+            $dbPrefix = env('TENANCY_DB_PREFIX', config('tenancy.database.prefix', ''));
+            $dbSuffix = env('TENANCY_DB_SUFFIX', config('tenancy.database.suffix', '_smart_housing'));
+            
             foreach ($tenants as $tenant) {
                 try {
-                    $tenantDbName = $tenant->id . '_smart_housing';
+                    $tenantDbName = $dbPrefix . $tenant->id . $dbSuffix;
                     Config::set('database.connections.tenant.database', $tenantDbName);
                     DB::purge('tenant');
                     DB::connection('tenant')->reconnect();

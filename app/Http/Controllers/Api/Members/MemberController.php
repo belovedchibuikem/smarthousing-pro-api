@@ -33,7 +33,7 @@ class MemberController extends Controller
             return response()->json(['message' => 'Unauthenticated'], 401);
         }
 
-        $query = Member::with(['user']);
+        $query = Member::with(['user.wallet', 'equityWalletBalance']);
 
             // Filter by status (only apply if column exists to avoid SQL errors)
         if ($request->has('status') && $request->status !== 'all') {
@@ -376,7 +376,7 @@ class MemberController extends Controller
                 'message' => 'Only submitted KYC can be approved'
             ], 400);
         }
-
+        Log::info('Approving KYC for member: ' . $member->id);
         $member->update([
             'kyc_status' => 'verified',
             'kyc_verified_at' => now(),
@@ -387,7 +387,7 @@ class MemberController extends Controller
         $this->auditLogService->logApproval(
             $member,
             'KYC',
-            Auth::user(),
+            $request->user(),
             [
                 'member_id' => $member->id,
                 'member_name' => $member->first_name . ' ' . $member->last_name,

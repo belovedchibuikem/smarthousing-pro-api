@@ -81,13 +81,14 @@ class BusinessOnboardingController extends Controller
 
             // Create tenant database immediately
             Log::info('Creating tenant database during onboarding', [
-                'tenant_id' =>  $request->slug,
+                'tenant_id' => $tenant->id,
+                'slug' => $request->slug,
             ]);
 
             $this->databaseService->createDatabaseFromSql($tenant);
 
-            // Set up tenant database connection
-            $this->databaseService->createDatabaseConnection( $request->slug . '_smart_housing');
+            // Set up tenant database connection (base name - prefix will be added automatically)
+            $this->databaseService->createDatabaseConnection($tenant->id . '_smart_housing');
 
             // Create admin user in tenant database
             $this->createAdminUser($tenant, $request);

@@ -20,7 +20,7 @@ class DashboardController extends Controller
 {
     public function stats(Request $request): JsonResponse
     {
-        $user = Auth::user();
+        $user = $request->user();
         $member = $user->member;
 
         if (!$member) {
@@ -31,7 +31,7 @@ class DashboardController extends Controller
 
         // Get user's financial stats
         $totalContributions = Contribution::where('member_id', $member->id)
-            ->where('status', 'approved')
+            ->whereIn('status', ['approved', 'completed'])
             ->sum('amount');
 
         $activeLoans = Loan::where('member_id', $member->id)
@@ -88,8 +88,8 @@ class DashboardController extends Controller
             // Members are identified by role='member' in the users table
             // Using the configured tenant connection which should already be initialized by middleware
             $totalMembers = DB::table('users')->where('role', 'member')->count();
-            $totalContributions = Contribution::where('status', 'approved')->sum('amount');
-            $totalLoans = Loan::where('status', 'approved')->sum('amount');
+            $totalContributions = Contribution::whereIn('status', ['approved', 'completed'])->sum('amount');
+            $totalLoans = Loan::where('status', 'approved')->count();
             $totalInvestments = Investment::where('status', 'active')->sum('amount');
             $totalProperties = Property::count();
             $activeProperties = Property::where('status', 'available')->count();

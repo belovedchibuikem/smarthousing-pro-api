@@ -290,8 +290,21 @@ class TenantMiddleware
             }
 
             // Configure tenant database
-            $tenantDatabaseName = $tenant->id . '_smart_housing';
+            // Get database prefix from environment/config
+            $dbPrefix = env('TENANCY_DB_PREFIX', config('tenancy.database.prefix', ''));
+            $dbSuffix = env('TENANCY_DB_SUFFIX', config('tenancy.database.suffix', '_smart_housing'));
             
+            // Construct database name: {prefix}{tenant_id}{suffix}
+            $baseDatabaseName = $tenant->id . $dbSuffix;
+            $tenantDatabaseName = $dbPrefix . $baseDatabaseName;
+            
+            Log::debug('TenantMiddleware: constructing tenant database name', [
+                'prefix' => $dbPrefix,
+                'tenant_id' => $tenant->id,
+                'suffix' => $dbSuffix,
+                'base_name' => $baseDatabaseName,
+                'full_name' => $tenantDatabaseName,
+            ]);
             
             try {
             DB::purge('tenant');

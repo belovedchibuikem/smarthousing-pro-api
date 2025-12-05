@@ -55,6 +55,7 @@ class MemberResource extends JsonResource
                 'role' => $this->user->role,
             ]),
             'wallet' => $this->when($this->user && $this->user->relationLoaded('wallet'), $this->user->wallet),
+            'equity_wallet_balance' => $this->whenLoaded('equityWalletBalance', $this->equityWalletBalance),
             'loans' => $this->whenLoaded('loans'),
             'investments' => $this->whenLoaded('investments'),
             'contributions' => $this->whenLoaded('contributions'),
